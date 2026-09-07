@@ -3,6 +3,7 @@ import { merge } from './merge'
 import { IAppState, SelectionType } from '../lib/app-state'
 import {
   Repository,
+  getGitHubHtmlUrl,
   isRepositoryWithGitHubRepository,
 } from '../models/repository'
 import { CloningRepository } from '../models/cloning-repository'
@@ -283,7 +284,14 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
       isHostedOnGitHub && hasPublishedBranch
     )
 
-    menuStateBuilder.setEnabled('view-repository-on-github', isHostedOnGitHub)
+    menuStateBuilder.setEnabled(
+      'view-repository-on-github',
+      selectedState?.type === SelectionType.Repository &&
+        getGitHubHtmlUrl(
+          selectedState.repository,
+          selectedState.state.remote
+        ) !== null
+    )
     menuStateBuilder.setEnabled(
       'create-issue-in-repository-on-github',
       repoIssuesEnabled

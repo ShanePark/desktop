@@ -8,6 +8,8 @@ import {
 } from './workflow-preferences'
 import { assertNever, fatalError } from '../lib/fatal-error'
 import { createEqualityHash } from './equality-hash'
+import { IRemote } from './remote'
+import { parseRemote } from '../lib/remote-parsing'
 
 function getBaseName(path: string): string {
   const baseName = Path.basename(path)
@@ -165,14 +167,27 @@ export function nameOf(repository: Repository) {
 /**
  * Get the GitHub html URL for a repository, if it has one.
  * Will return the parent GitHub repository's URL if it has one.
- * Otherwise, returns null.
+ * Falls back to the configured GitHub.com remote without requiring API metadata.
  */
-export function getGitHubHtmlUrl(repository: Repository): string | null {
-  if (!isRepositoryWithGitHubRepository(repository)) {
+export function getGitHubHtmlUrl(
+  repository: Repository,
+  remote: IRemote | null = null
+): string | null {
+  if (isRepositoryWithGitHubRepository(repository)) {
+    const htmlURL = getNonForkGitHubRepository(repository).htmlURL
+    if (htmlURL !== null) {
+      return htmlURL
+    }
+  }
+
+  const parsed = remote === null ? null : parseRemote(remote.url)
+  if (parsed === null || parsed.hostname.toLowerCase() !== 'github.com') {
     return null
   }
 
-  return getNonForkGitHubRepository(repository).htmlURL
+  return `https://github.com/${encodeURIComponent(
+    parsed.owner
+  )}/${encodeURIComponent(parsed.name)}`
 }
 
 /**
