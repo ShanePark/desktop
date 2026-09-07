@@ -1,162 +1,77 @@
-# [GitHub Desktop](https://desktop.github.com) - The Linux Fork
+# [GitHub Desktop](https://desktop.github.com/) — ShanePark Linux fork
 
-[![CI](https://github.com/shiftkey/desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/shiftkey/desktop/actions/workflows/ci.yml)
+[![Upstream CI](https://github.com/shiftkey/desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/shiftkey/desktop/actions/workflows/ci.yml)
 
-[GitHub Desktop](https://desktop.github.com/) is an open-source [Electron](https://www.electronjs.org/)-based
-GitHub app. It is written in [TypeScript](https://www.typescriptlang.org) and
-uses [React](https://reactjs.org/).
+This repository is [ShanePark's working fork](https://github.com/ShanePark/desktop)
+of [GitHub Desktop](https://desktop.github.com/), based on the Linux work in
+[shiftkey/desktop](https://github.com/shiftkey/desktop). GitHub Desktop is an
+open-source [Electron](https://www.electronjs.org/)-based GitHub app written in
+[TypeScript](https://www.typescriptlang.org) and [React](https://reactjs.org/).
 
-<picture>
-  <source
-    srcset="https://user-images.githubusercontent.com/634063/202742848-63fa1488-6254-49b5-af7c-96a6b50ea8af.png"
-    media="(prefers-color-scheme: dark)"
-  />
-  <img
-    width="1072"
-    src="https://user-images.githubusercontent.com/634063/202742985-bb3b3b94-8aca-404a-8d8a-fd6a6f030672.png"
-    alt="A screenshot of the GitHub Desktop application showing changes being viewed and committed with two attributed co-authors"
-  />
-</picture>
+The [original GitHub Desktop project](https://github.com/desktop/desktop) and
+the [shiftkey Linux fork](https://github.com/shiftkey/desktop) remain the
+upstream references for the product, its history, and their contributor
+communities. This fork is the working source for ShanePark's Linux improvements.
 
-## What is this repository for?
+## Current fork work
 
-This repository contains specific patches on top of the upstream
-`desktop/desktop` repository to support Linux usage.
+The current work focuses on the Linux repository workflow:
 
-It also publishes [releases](https://github.com/shiftkey/desktop/releases) for various Linux distributions:
+- The repository picker can organize repositories into Working, custom groups,
+  and Ungrouped, with activity sorting, filtering, persistence, and manual
+  ordering.
+- `View on GitHub` (`Ctrl+Shift+G`) can use a configured `github.com` remote as
+  a fallback when GitHub API repository metadata is unavailable. HTTPS and SSH
+  remotes are supported.
 
- - AppImage (`.AppImage`)
- - Debian (`.deb`)
- - RPM (`.rpm`)
+The behavior, storage details, local build workflow, and verification checks are
+documented in [repository activity](docs/repository-activity.md).
 
-## Installation via package manager
+## Development
 
-You can use your operating system's package manager to install `github-desktop` and
-keep it up to date on Debian and RPM-based distributions.
+The `linux` branch is this fork's main development branch. It combines the
+3.4.12 Linux release base with the repository workflow improvements described
+above.
 
-### Debian/Ubuntu
-
-There are two APT package feeds available, both hosted in the US. You only need
-to add one or the other here, as both of these are generated based on the
-releases from this repository.
-
-#### [@shiftkey](https://github.com/shiftkey) package feed
+Clone this fork and install its dependencies:
 
 ```sh
-wget -qO - https://apt.packages.shiftkey.dev/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/shiftkey-packages.gpg > /dev/null
-sudo sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/shiftkey-packages.gpg] https://apt.packages.shiftkey.dev/ubuntu/ any main" > /etc/apt/sources.list.d/shiftkey-packages.list'
+git clone git@github.com:ShanePark/desktop.git
+cd desktop
+git switch linux
+yarn install
 ```
 
-#### [@mwt](https://github.com/mwt) package feed
+To build the Linux app, deploy this checkout's local Dock runtime, and restart
+the app for review after a successful build, run:
 
 ```sh
-wget -qO - https://mirror.mwt.me/shiftkey-desktop/gpgkey | gpg --dearmor | sudo tee /usr/share/keyrings/mwt-desktop.gpg > /dev/null
-sudo sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mwt-desktop.gpg] https://mirror.mwt.me/shiftkey-desktop/deb/ any main" > /etc/apt/sources.list.d/mwt-desktop.list'
+yarn build:local
 ```
 
-#### Installation
+The [local development guide](docs/local-development.md) explains the fork's
+Git workflow and Dock review setup. The [repository activity verification
+notes](docs/repository-activity.md#verification) cover launcher details,
+runtime logs, and feature-specific checks.
 
-Once you have a feed configured, run this command to install the application:
+## Linux packages
 
-```sh
-sudo apt update && sudo apt install github-desktop
-```
-
-### Red Hat/CentOS/Fedora
-
-There are two RPM package feeds available, both hosted in the US. You only need
-to add one or the other here, as both of these are generated based on the
-releases from this repository.
-
-#### [@shiftkey](https://github.com/shiftkey) package feed
-
-```sh
-sudo rpm --import https://rpm.packages.shiftkey.dev/gpg.key
-sudo sh -c 'echo -e "[shiftkey-packages]\nname=GitHub Desktop\nbaseurl=https://rpm.packages.shiftkey.dev/rpm/\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://rpm.packages.shiftkey.dev/gpg.key" > /etc/yum.repos.d/shiftkey-packages.repo'
-```
-
-#### [@mwt](https://github.com/mwt) package feed
-
-```sh
-sudo rpm --import https://mirror.mwt.me/shiftkey-desktop/gpgkey
-sudo sh -c 'echo -e "[mwt-packages]\nname=GitHub Desktop\nbaseurl=https://mirror.mwt.me/shiftkey-desktop/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://mirror.mwt.me/shiftkey-desktop/gpgkey" > /etc/yum.repos.d/mwt-packages.repo'
-```
-
-#### Installation
-
-Once you have a feed configured, run this command to install the application:
-
-```sh
-# if yum is your package manager
-sudo yum install github-desktop
-
-# if dnf is your package manager
-sudo dnf install github-desktop
-
-# if zypper is your package manager
-sudo zypper ref && sudo zypper in github-desktop
-```
-
-#### OpenSUSE
-
-There are two RPM package feeds available, both hosted in the US. You only need
-to add one or the other here, as both of these are generated based on the
-releases from this repository.
-
-#### [@shiftkey](https://github.com/shiftkey) package feed
-
-```sh
-sudo rpm --import https://rpm.packages.shiftkey.dev/gpg.key
-sudo sh -c 'echo -e "[shiftkey-packages]\nname=GitHub Desktop\nbaseurl=https://rpm.packages.shiftkey.dev/rpm/\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://rpm.packages.shiftkey.dev/gpg.key" > /etc/zypp/repos.d/shiftkey-packages.repo'
-```
-
-#### [@mwt](https://github.com/mwt) package feed
-
-```sh
-sudo rpm --import https://mirror.mwt.me/shiftkey-desktop/gpgkey
-sudo sh -c 'echo -e "[mwt-packages]\nname=GitHub Desktop\nbaseurl=https://mirror.mwt.me/shiftkey-desktop/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://mirror.mwt.me/shiftkey-desktop/gpgkey" > /etc/zypp/repos.d/mwt-packages.repo'
-```
-
-#### Installation
-
-```sh
-sudo zypper ref && sudo zypper in github-desktop
-```
-
-
-## Other Distributions
-
-### Arch Linux
-
-Arch Linux users can install GitHub Desktop from the [AUR](https://aur.archlinux.org/packages/github-desktop-bin/).
-
-`gnome-keyring` is required and the daemon must be launched either at login or when the X server is started. Normally this is handled by a display manager, but in other cases following the instructions found on the [Arch Wiki](https://wiki.archlinux.org/index.php/GNOME/Keyring#Using_the_keyring_outside_GNOME) will fix the issue of not being able to save login credentials.
-
-### Cross-Distribution Packages
-
-GitHub Desktop is also available cross-platform as a [Flatpak](https://github.com/flathub/io.github.shiftey.Desktop) and [AppImage](https://appimage.github.io/GitHubDesktop/).
-
-### deb-get
-
-Debian/Ubuntu users can also install directly from this repository using [`deb-get`](https://github.com/wimpysworld/deb-get): `deb-get install github-desktop`.
-
-## Known issues
-
-If you're having troubles with Desktop, please refer to the [Known issues](docs/known-issues.md#linux)
-document for guidance and workarounds for common limitations.
-
-If your package manager is still trying to reach PackageCloud, refer to the
-[cleanup instructions](docs/known-issues.md#the-packagecloud-package-feed-is-no-longer-working)
-for details about migrating away.
+Use the source build workflow above for this fork's changes.
+For packaged upstream Linux builds and current
+installation instructions, see the [shiftkey/desktop README](https://github.com/shiftkey/desktop)
+and its [releases](https://github.com/shiftkey/desktop/releases). The AppImage,
+Debian/RPM feeds, and other packages described there belong to those upstream
+projects and are not releases of `ShanePark/desktop`.
 
 ## More information
 
-Please check out the [README](https://github.com/desktop/desktop#github-desktop)
-on the upstream [GitHub Desktop project](https://github.com/desktop/desktop) and
-[desktop.github.com](https://desktop.github.com) for more product-oriented
-information about GitHub Desktop.
+For product-oriented information, setup, authentication, and configuration,
+see the [upstream GitHub Desktop README](https://github.com/desktop/desktop#readme),
+[desktop.github.com](https://desktop.github.com/), and the
+[GitHub Desktop documentation](https://docs.github.com/en/desktop/overview/getting-started-with-github-desktop).
 
-See our [getting started documentation](https://docs.github.com/en/desktop/overview/getting-started-with-github-desktop) for more information on how to set up, authenticate, and configure GitHub Desktop.
+For Linux limitations and workarounds, see the
+[known issues](docs/known-issues.md#linux) document.
 
 ## License
 

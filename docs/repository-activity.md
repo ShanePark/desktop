@@ -1,14 +1,16 @@
 # Repository activity in the Linux fork
 
-This feature targets `ShanePark/desktop`'s `linux` branch. It does not replace
-this fork with Desktop Plus or upgrade the application's dependencies.
+This feature is integrated into `ShanePark/desktop`'s `linux` branch, based on
+the 3.4.12 Linux release.
+See [local development](local-development.md) for the fork's Git and Dock workflow.
+It does not replace this fork with Desktop Plus or upgrade the application's dependencies.
 
 ## Using the repository picker
 
 Open **Current Repository**. The list always shows these sections in order:
 
 - **Working**: repositories with uncommitted changes or local commits not
-  reachable from any known remote branch, regardless of their assigned group.
+  pushed from the current branch, regardless of their assigned group.
 - **Your groups**: create groups using **Add → New group…**. A `shane` group is provided initially.
 - **Ungrouped**: repositories that have not been assigned to a group.
 
@@ -49,10 +51,12 @@ assignment when not filtering. Keyboard selection follows the repository ID
 as activity updates or assignments move a row. Hover a row to see changed-file
 and unpushed-commit counts and its activity time.
 
-Unpushed counts cover all local branches and detached HEAD, using locally
-stored remote refs. No network fetch is made by this scanner, so a push from
-another computer is reflected after the usual fetch. A repository with no
-remote counts its local commits as unpublished.
+Unpushed counts compare the current HEAD with its configured upstream. Other
+local branches do not affect Working. Without an upstream (including detached
+HEAD), only current HEAD commits absent from known remote branches are counted.
+This uses local remote-tracking refs, so pushes from another computer appear
+after the usual fetch. A repository with no remote counts HEAD commits as
+unpublished; an unborn branch has zero commits.
 
 ## Scanning and storage
 
@@ -150,10 +154,10 @@ yarn compile:dev
 
 The first runner has 45 checks, including real temporary Git repositories,
 repeat edits, staged changes, deletions, renames, ignored output, symlinks,
-worktrees, persistence, sorting, failures and concurrency. The second has 19
+worktrees, persistence, sorting, failures and concurrency. The second has 23
 wiring checks that execute the modified TSX with stubbed React/DOM and Git
 services; it is not a real Electron GUI test. The Jest adapter includes both
-runners and an eight-case group/commit runner in the normal unit suite.
+runners and a nine-case group/commit runner in the normal unit suite.
 
 Before merging, validate the full Electron build and actual UI on Linux:
 check multiple projects edited in an external editor, name filtering while
@@ -173,3 +177,7 @@ repository above or below another to save its position and, across groups,
 its membership. Working alone uses the Sort by setting; custom groups and
 Ungrouped retain manual order, including after searching or returning from
 Working. New repositories follow saved entries in name order.
+
+Dragging resolves the nearest insertion slot across the whole list, including
+row gaps and group bodies. Rows shift apart around a visible drop placeholder.
+Dropping commits that previewed slot; leaving the list or cancelling clears it.
