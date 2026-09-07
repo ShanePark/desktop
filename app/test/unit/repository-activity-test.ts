@@ -10,7 +10,7 @@ const run = promisify(execFile)
 describe('repository activity', () => {
   it.each([
     ['test-repository-activity.cjs', '45/45 tests passed'],
-    ['test-repository-activity-ui.cjs', '23/23 UI wiring tests passed'],
+    ['test-repository-activity-ui.cjs', '24/24 UI wiring tests passed'],
     ['test-repository-groups.cjs', '9/9 repository group tests passed'],
   ])(
     'passes %s',

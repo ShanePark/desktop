@@ -66,6 +66,7 @@ function load(path) {
     }
     if (/repository-activity\/(status|list|preferences|organization)$/.test(target)) return load(`${target}.ts`)
     if (target.endsWith('/repository-group-dialog') || target.endsWith('/repository-activity-toolbar') || target.endsWith('/section-filter-list')) return load(`${target}.tsx`)
+    if (target.endsWith('/repository-activity/drag')) return load(`${target}.ts`)
     return {}
   }
   mod._compile(output.outputText, path)
@@ -338,6 +339,78 @@ test('container drop commits the previewed slot even over whitespace', () => {
   Assert.deepEqual(picker.state.organization.repositoryOrder, [repositories[1].path, repositories[0].path])
   Assert.equal(picker.dropSlot, null)
   picker.updateOrganization(original)
+})
+test('group drag preview keeps virtualized headers in their layout slots', () => {
+  const originalCreateElement = document.createElement
+  const originalBody = document.body
+  const originalOrganization = picker.state.organization
+  const bodyChildren = []
+  const sourceListItem = { style: { removeProperty() {} }, getBoundingClientRect: () => ({ top: 0, bottom: 29 }) }
+  const targetListItem = { style: { removeProperty() {} }, getBoundingClientRect: () => ({ top: 29, bottom: 58 }) }
+  const sourceHeader = { dataset: { group: 'group-a' }, closest: () => sourceListItem }
+  const targetHeader = { dataset: { group: 'group-b' }, closest: () => targetListItem }
+  const scroll = {
+    scrollTop: 0,
+    getBoundingClientRect: () => ({ top: 0, bottom: 100 }),
+    querySelectorAll: selector => selector === '.repository-custom-group, .repository-activity-row' ? [sourceHeader, targetHeader] : [],
+  }
+  const added = []
+  let addCount = 0
+  const dragList = {
+    getBoundingClientRect: () => ({ top: 0 }),
+    classList: { remove() {}, add() { addCount++ } },
+    querySelector: selector => selector === '.ReactVirtualized__Grid' ? scroll : null,
+    querySelectorAll: selector => selector === '.list-item' ? [sourceListItem, targetListItem] : [],
+    appendChild: element => added.push(element),
+  }
+  document.body = { appendChild: element => bodyChildren.push(element) }
+  document.createElement = () => {
+    const element = { className: '', style: {}, textContent: '', removed: false }
+    element.remove = () => { element.removed = true }
+    return element
+  }
+  try {
+    let dragImageCall
+    const groupId = originalOrganization.groups[0].id
+    picker.onGroupReorderStart({
+      currentTarget: { dataset: { group: groupId } },
+      dataTransfer: {
+        setData() {},
+        effectAllowed: '',
+        setDragImage: (image, x, y) => { dragImageCall = { image, x, y } },
+      },
+      stopPropagation() {},
+    })
+    Assert.equal(bodyChildren.length, 1)
+    Assert.equal(bodyChildren[0].className, 'repository-group-drag-image')
+    Assert.equal(bodyChildren[0].textContent, 'shane')
+    Assert.deepEqual(dragImageCall, { image: bodyChildren[0], x: 10, y: 13 })
+    picker.onRepositoryDragEnd()
+    Assert.equal(bodyChildren[0].removed, true)
+
+    picker.draggedRepository = null
+    picker.draggedGroup = 'group-a'
+    picker.onListDragOver({
+      currentTarget: dragList,
+      clientY: 40,
+      dataTransfer: { dropEffect: '' },
+      preventDefault() {},
+      stopPropagation() {},
+    })
+    picker.onRepositoryDragEnd()
+    Assert.equal(addCount, 0)
+    Assert.equal(sourceListItem.style.transform, undefined)
+    Assert.equal(targetListItem.style.transform, undefined)
+    Assert.equal(added.length, 1)
+    Assert.equal(added[0].className, 'repository-drop-placeholder repository-group-drop-placeholder')
+    Assert.equal(added[0].style.top, '28px')
+    Assert.equal(added[0].textContent, '')
+  } finally {
+    document.createElement = originalCreateElement
+    document.body = originalBody
+    picker.onRepositoryDragEnd()
+    picker.updateOrganization(originalOrganization)
+  }
 })
 test('inactive window does not start scheduled scans; focus does', () => {
   const before = picker.activityMonitor.refreshes

@@ -156,6 +156,7 @@ export class RepositoriesList extends React.Component<
   private draggedGroup: string | null = null
   private dropSlot: IRepositoryDropSlot | null = null
   private dragList: HTMLDivElement | null = null
+  private groupDragImage: HTMLDivElement | null = null
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
 
@@ -239,6 +240,7 @@ export class RepositoriesList extends React.Component<
 
   public componentWillUnmount() {
     this.clearDropPreview()
+    this.clearGroupDragImage()
     this.activityMonitor.stop()
     window.clearInterval(this.activityTimer)
     window.removeEventListener('focus', this.refreshActivity)
@@ -529,6 +531,7 @@ export class RepositoriesList extends React.Component<
 
   private onRepositoryDragEnd = () => {
     this.clearDropPreview()
+    this.clearGroupDragImage()
     this.dropSlot = null
     this.dragList = null
     this.draggedRepository = null
@@ -603,6 +606,13 @@ export class RepositoriesList extends React.Component<
     this.draggedRepository = null
     event.dataTransfer.setData('application/x-desktop-repository-group', id)
     event.dataTransfer.effectAllowed = 'move'
+    this.clearGroupDragImage()
+    const image = document.createElement('div')
+    image.className = 'repository-group-drag-image'
+    image.textContent = this.getGroupLabel(id as RepositoryGroupIdentifier)
+    document.body.appendChild(image)
+    this.groupDragImage = image
+    event.dataTransfer.setDragImage(image, 10, 13)
   }
 
   private moveGroup = (id: string, direction: 'up' | 'down') => {
@@ -700,6 +710,11 @@ export class RepositoriesList extends React.Component<
     this.dragList?.querySelector('.repository-drop-placeholder')?.remove()
   }
 
+  private clearGroupDragImage = () => {
+    this.groupDragImage?.remove()
+    this.groupDragImage = null
+  }
+
   private onListDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
     if (
       event.relatedTarget instanceof Node &&
@@ -765,23 +780,31 @@ export class RepositoriesList extends React.Component<
     }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-    this.dragList.classList.add('repository-drag-active')
-    // Shift row wrappers, leaving their layout positions stable for hit testing.
-    elements.forEach((element, index) => {
-      const row = element.closest<HTMLElement>('.list-item')
-      if (row) {
-        row.style.transform = `translateY(${
-          rows[index].top >= slot.y - 1 ? 14 : -14
-        }px)`
-      }
-    })
+    // Group headers live in nested virtualized grids; moving those cells while
+    // overflow is visible causes duplicate or clipped headers.
+    if (this.draggedRepository !== null) {
+      this.dragList.classList.add('repository-drag-active')
+      // Shift row wrappers, leaving their layout positions stable for hit testing.
+      elements.forEach((element, index) => {
+        const row = element.closest<HTMLElement>('.list-item')
+        if (row) {
+          row.style.transform = `translateY(${
+            rows[index].top >= slot.y - 1 ? 14 : -14
+          }px)`
+        }
+      })
+    }
+    const groupDrag = this.draggedGroup !== null
     const placeholder = document.createElement('div')
-    placeholder.className = 'repository-drop-placeholder'
+    placeholder.className = `repository-drop-placeholder${
+      groupDrag ? ' repository-group-drop-placeholder' : ''
+    }`
     placeholder.style.top = `${
-      slot.y - this.dragList.getBoundingClientRect().top - 13
+      slot.y - this.dragList.getBoundingClientRect().top - (groupDrag ? 1 : 13)
     }px`
-    placeholder.textContent =
-      this.draggedGroup !== null ? 'Move group here' : 'Move repository here'
+    if (!groupDrag) {
+      placeholder.textContent = 'Move repository here'
+    }
     this.dragList.appendChild(placeholder)
   }
 

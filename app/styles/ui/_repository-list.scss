@@ -417,6 +417,34 @@
     line-height: 24px;
     text-align: center;
   }
+
+  .repository-group-drop-placeholder {
+    height: 2px;
+    border: 0;
+    border-radius: 0;
+    background: var(--tab-bar-active-color);
+  }
+}
+
+.repository-group-drag-image {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  width: max-content;
+  max-width: 220px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--box-border-color);
+  border-radius: 4px;
+  background: var(--box-alt-background-color);
+  color: var(--text-color);
+  font-weight: 600;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 // Each section has its own virtual grid. Let preview rows cross section edges,
