@@ -207,3 +207,46 @@
     }
   }
 }
+
+// Keep activity controls outside the virtualized rows.
+.repository-list {
+  .repository-activity-row {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .repository-activity-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--spacing-half);
+    padding: var(--spacing);
+    flex: 0 0 auto;
+    border-bottom: var(--base-border);
+
+    .repository-activity-filter {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-half);
+      min-width: 0;
+    }
+
+    select {
+      min-width: 0;
+      max-width: 100%;
+      font: inherit;
+      color: var(--text-color);
+      background: var(--background-color);
+      border: var(--base-border);
+      border-radius: var(--border-radius);
+    }
+
+    .repository-activity-summary {
+      grid-column: 1 / -1;
+      color: var(--text-secondary-color);
+      font-size: var(--font-size-sm);
+      overflow-wrap: anywhere;
+    }
+  }
+}

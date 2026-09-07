@@ -25,6 +25,21 @@ import memoizeOne from 'memoize-one'
 import { KeyboardShortcut } from '../keyboard-shortcut/keyboard-shortcut'
 import { generateRepositoryListContextMenu } from '../repositories-list/repository-list-item-context-menu'
 import { SectionFilterList } from '../lib/section-filter-list'
+import { RepositoryActivityToolbar } from './repository-activity-toolbar'
+import { readRepositoryActivity } from '../../lib/git/repository-activity'
+import {
+  RepositoryActivityMonitor,
+  IActivityState,
+} from '../../lib/repository-activity/monitor'
+import {
+  IActivityPreferences,
+  readActivityPreferences,
+  saveActivityPreferences,
+  readActivityCache,
+  saveActivityCache,
+} from '../../lib/repository-activity/preferences'
+import { activityKey } from '../../lib/repository-activity/status'
+import { projectActivityGroups } from '../../lib/repository-activity/list'
 
 const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 
@@ -78,6 +93,9 @@ interface IRepositoriesListProps {
 }
 
 interface IRepositoriesListState {
+  readonly selectedItem: IRepositoryListItem | null
+  readonly activity: IActivityState
+  readonly activityPreferences: IActivityPreferences
   readonly newRepositoryMenuExpanded: boolean
 }
 
@@ -109,6 +127,9 @@ export class RepositoriesList extends React.Component<
   IRepositoriesListProps,
   IRepositoriesListState
 > {
+  private readonly activityMonitor: RepositoryActivityMonitor
+  private activityTimer: number | undefined
+
   /**
    * A memoized function for grouping repositories for display
    * in the FilterList. The group will not be recomputed as long
@@ -139,27 +160,137 @@ export class RepositoriesList extends React.Component<
   public constructor(props: IRepositoriesListProps) {
     super(props)
 
+    const initialActivity = readActivityCache(localStorage)
     this.state = {
+      selectedItem: null,
       newRepositoryMenuExpanded: false,
+      activityPreferences: readActivityPreferences(localStorage),
+      activity: {
+        repositories: initialActivity,
+        checking: false,
+        completed: 0,
+        total: 0,
+      },
     }
+    this.activityMonitor = new RepositoryActivityMonitor(
+      readRepositoryActivity,
+      activity => {
+        if (!activity.checking) {
+          saveActivityCache(localStorage, activity.repositories)
+        }
+        this.setState({ activity })
+      },
+      initialActivity
+    )
+  }
+
+  public componentDidMount() {
+    this.updateActivityPaths()
+    this.refreshActivity()
+    window.addEventListener('focus', this.refreshActivity)
+    document.addEventListener('visibilitychange', this.refreshVisibleActivity)
+    this.activityTimer = window.setInterval(this.refreshVisibleActivity, 15000)
+  }
+
+  public componentDidUpdate(previous: IRepositoriesListProps) {
+    if (previous.selectedRepository !== this.props.selectedRepository) {
+      this.setState({ selectedItem: null })
+    }
+    if (previous.repositories !== this.props.repositories) {
+      if (this.updateActivityPaths()) {
+        this.refreshActivity()
+      }
+    }
+  }
+
+  public componentWillUnmount() {
+    this.activityMonitor.stop()
+    window.clearInterval(this.activityTimer)
+    window.removeEventListener('focus', this.refreshActivity)
+    document.removeEventListener('visibilitychange', this.refreshVisibleActivity)
+  }
+
+  private updateActivityPaths() {
+    // Scan all registered working copies, not only the selected repository
+    // or the subset currently matching the text/status filters.
+    return this.activityMonitor.setPaths(
+      this.props.repositories
+        .filter((r): r is Repository => r instanceof Repository)
+        .map(r => r.path)
+    )
+  }
+
+  private refreshActivity = () => {
+    void this.activityMonitor.refresh()
+  }
+
+  private refreshVisibleActivity = () => {
+    if (document.visibilityState !== 'hidden' && document.hasFocus()) {
+      this.refreshActivity()
+    }
+  }
+
+  private onActivityPreferencesChanged = (
+    activityPreferences: IActivityPreferences
+  ) => {
+    saveActivityPreferences(localStorage, activityPreferences)
+    this.setState({ activityPreferences, selectedItem: null })
+  }
+
+  private renderActivityToolbar = () => (
+    <RepositoryActivityToolbar
+      preferences={this.state.activityPreferences}
+      activity={this.state.activity}
+      onChange={this.onActivityPreferencesChanged}
+      onRefresh={this.refreshActivity}
+    />
+  )
+
+  private getActivityDescription(item: IRepositoryListItem) {
+    const activity = this.state.activity.repositories.get(
+      activityKey(item.repository.path)
+    )
+    if (activity === undefined || activity.checkedAt === 0) {
+      return 'Local activity: waiting for status check'
+    }
+    if (activity.error) {
+      return 'Local activity: unavailable (not treated as clean)'
+    }
+    if (activity.changedFilesCount === 0) {
+      return 'No uncommitted changes'
+    }
+    const time =
+      activity.lastChangedAt === null
+        ? 'last change time unknown'
+        : `last local change ${new Date(
+            activity.lastChangedAt
+          ).toLocaleString()} (estimated)`
+    return `${activity.changedFilesCount} changed files; ${time}`
   }
 
   private renderItem = (item: IRepositoryListItem, matches: IMatches) => {
     const repository = item.repository
     return (
-      <RepositoryListItem
+      <div
         key={repository.id}
-        repository={repository}
-        needsDisambiguation={item.needsDisambiguation}
-        matches={matches}
-        aheadBehind={item.aheadBehind}
-        changedFilesCount={item.changedFilesCount}
-      />
+        className="repository-activity-row"
+        title={this.getActivityDescription(item)}
+      >
+        <RepositoryListItem
+          repository={repository}
+          needsDisambiguation={item.needsDisambiguation}
+          matches={matches}
+          aheadBehind={item.aheadBehind}
+          changedFilesCount={item.changedFilesCount}
+        />
+      </div>
     )
   }
 
   private getGroupLabel(identifier: RepositoryGroupIdentifier) {
-    if (identifier === KnownRepositoryGroup.Enterprise) {
+    if (identifier === '_LocalActivity_') {
+      return 'Local working copies'
+    } else if (identifier === KnownRepositoryGroup.Enterprise) {
       return 'Enterprise'
     } else if (identifier === KnownRepositoryGroup.NonGitHub) {
       return 'Other'
@@ -219,7 +350,8 @@ export class RepositoriesList extends React.Component<
     showContextualMenu(items)
   }
 
-  private getItemAriaLabel = (item: IRepositoryListItem) => item.repository.name
+  private getItemAriaLabel = (item: IRepositoryListItem) =>
+    `${item.repository.name}, ${this.getActivityDescription(item)}`
   private getGroupAriaLabelGetter =
     (groups: ReadonlyArray<IFilterListGroup<IRepositoryListItem>>) =>
     (group: number) =>
@@ -231,12 +363,7 @@ export class RepositoriesList extends React.Component<
       this.props.localRepositoryStateLookup
     )
 
-    const selectedItem = this.getSelectedListItem(
-      baseGroups,
-      this.props.selectedRepository
-    )
-
-    const groups =
+    const originalGroups =
       this.props.repositories.length > recentRepositoriesThreshold
         ? [
             makeRecentRepositoriesGroup(
@@ -248,6 +375,18 @@ export class RepositoriesList extends React.Component<
           ]
         : baseGroups
 
+    const groups = projectActivityGroups(
+      originalGroups,
+      this.state.activity.repositories,
+      this.state.activityPreferences,
+      '_LocalActivity_'
+    )
+    const selectedItem =
+      groups
+        .flatMap(group => group.items)
+        .find(item => item.id === this.state.selectedItem?.id) ??
+      this.getSelectedListItem(groups, this.props.selectedRepository)
+
     return (
       <div className="repository-list">
         <SectionFilterList<IRepositoryListItem>
@@ -258,10 +397,15 @@ export class RepositoriesList extends React.Component<
           renderItem={this.renderItem}
           renderGroupHeader={this.renderGroupHeader}
           onItemClick={this.onItemClick}
+          onSelectionChanged={this.onListSelectionChanged}
+          renderPreList={this.renderActivityToolbar}
+          preserveItemOrder={this.state.activityPreferences.sort !== 'name'}
           renderPostFilter={this.renderPostFilter}
           renderNoItems={this.renderNoItems}
           groups={groups}
           invalidationProps={{
+            activity: this.state.activity,
+            activityPreferences: this.state.activityPreferences,
             repositories: this.props.repositories,
             filterText: this.props.filterText,
           }}
@@ -271,6 +415,10 @@ export class RepositoriesList extends React.Component<
         />
       </div>
     )
+  }
+
+  private onListSelectionChanged = (selectedItem: IRepositoryListItem | null) => {
+    this.setState({ selectedItem })
   }
 
   private renderPostFilter = () => {
@@ -290,7 +438,11 @@ export class RepositoriesList extends React.Component<
     return (
       <div className="no-items no-results-found">
         <img src={BlankSlateImage} className="blankslate-image" alt="" />
-        <div className="title">Sorry, I can't find that repository</div>
+        <div className="title">
+          {this.state.activityPreferences.onlyUncommitted
+            ? 'No uncommitted repositories match the current filters'
+            : "Sorry, I can't find that repository"}
+        </div>
 
         <div className="protip">
           ProTip! Press{' '}

@@ -54,6 +54,10 @@ interface ISectionFilterListProps<T extends IFilterListItem> {
   // eslint-disable-next-line react/no-unused-prop-types
   readonly groups: ReadonlyArray<IFilterListGroup<T>>
 
+  /** Keep group item order when filtering instead of fuzzy relevance order. */
+  // eslint-disable-next-line react/no-unused-prop-types
+  readonly preserveItemOrder?: boolean
+
   /** The selected item. */
   readonly selectedItem: T | null
 
@@ -659,13 +663,21 @@ function createStateUpdate<T extends IFilterListItem>(
 
   for (const [idx, group] of props.groups.entries()) {
     const groupRows = new Array<IFilterListRow<T>>()
-    const items: ReadonlyArray<IMatch<T>> = filter
+    let items: ReadonlyArray<IMatch<T>> = filter
       ? match(filter, group.items, getText)
       : group.items.map(item => ({
           score: 1,
           matches: { title: [], subtitle: [] },
           item,
         }))
+
+    if (filter && props.preserveItemOrder) {
+      const matchesById = new Map(items.map(m => [m.item.id, m]))
+      items = group.items.flatMap(item => {
+        const result = matchesById.get(item.id)
+        return result === undefined ? [] : [result]
+      })
+    }
 
     if (!items.length) {
       continue
