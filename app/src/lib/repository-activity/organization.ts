@@ -8,6 +8,7 @@ const StorageKey = 'desktop.repository-groups.v1'
 
 export interface IRepositoryOrganization {
   readonly groups: ReadonlyArray<{ readonly id: string; readonly name: string }>
+  readonly collapsed?: ReadonlyArray<string>
   readonly assignments: Readonly<Record<string, string>>
 }
 
@@ -50,7 +51,23 @@ export function readRepositoryOrganization(
               path.length > 0 && typeof id === 'string' && ids.has(id)
           )
         )
-        return { groups, assignments: assignments as Record<string, string> }
+        return {
+          groups,
+          assignments: assignments as Record<string, string>,
+          ...(Array.isArray(value.collapsed)
+            ? {
+                collapsed: Array.from(
+                  new Set<string>(
+                    value.collapsed.filter(
+                      (id: unknown): id is string =>
+                        typeof id === 'string' &&
+                        (ids.has(id) || id === WorkingGroup || id === Ungrouped)
+                    )
+                  )
+                ),
+              }
+            : {}),
+        }
       }
     }
   } catch {
@@ -88,6 +105,10 @@ export function removeRepositoryGroup(
   id: string
 ): IRepositoryOrganization {
   return {
+    ...value,
+    ...(value.collapsed
+      ? { collapsed: value.collapsed.filter(g => g !== id) }
+      : {}),
     groups: value.groups.filter(g => g.id !== id),
     assignments: Object.fromEntries(
       Object.entries(value.assignments).filter(([, group]) => group !== id)
@@ -145,4 +166,25 @@ export function moveRepositoryGroup(
       : groups.findIndex(g => g.id === target) + (position === 'after' ? 1 : 0)
   groups.splice(index, 0, group)
   return { ...value, groups }
+}
+
+/** Keep section visibility independent of membership and group order. */
+export function toggleRepositoryGroup(
+  value: IRepositoryOrganization,
+  id: string
+): IRepositoryOrganization {
+  if (
+    id !== WorkingGroup &&
+    id !== Ungrouped &&
+    !value.groups.some(g => g.id === id)
+  ) {
+    return value
+  }
+  const collapsed = value.collapsed ?? []
+  return {
+    ...value,
+    collapsed: collapsed.includes(id)
+      ? collapsed.filter(g => g !== id)
+      : [...collapsed, id],
+  }
 }

@@ -220,19 +220,23 @@
     width: 100%;
     min-width: 0;
     -webkit-user-drag: element;
+    padding-left: 16px;
   }
 
   .repository-custom-group {
     display: flex;
     width: 100%;
-    padding-top: 4px;
+    padding-top: 0;
+    background: var(--box-alt-background-color);
+    border-bottom: 1px solid var(--box-border-color);
+    font-weight: 600;
     overflow: hidden;
     align-items: center;
     justify-content: space-between;
     height: 100%;
     min-width: 0;
 
-    > .repository-group-label {
+    .repository-group-label {
       flex: 1;
       min-width: 0;
       overflow: hidden;
@@ -252,6 +256,47 @@
       outline: 1px solid var(--text-color);
       outline-offset: -1px;
     }
+  }
+
+  .repository-group-toggle {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 26px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+
+    &:hover,
+    &:focus-visible {
+      background: var(--list-item-selected-background-color);
+    }
+    &[aria-disabled='true'] {
+      cursor: default;
+    }
+    .octicon {
+      flex-shrink: 0;
+      width: 12px;
+      height: 12px;
+    }
+  }
+
+  .repository-group-count {
+    flex-shrink: 0;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--box-background-color);
+    color: var(--text-secondary-color);
+    font-size: 10px;
+    font-weight: normal;
+    line-height: 16px;
   }
 
   .repository-group-grip {

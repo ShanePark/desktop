@@ -62,6 +62,10 @@ interface ISectionFilterListProps<T extends IFilterListItem> {
   // eslint-disable-next-line react/no-unused-prop-types
   readonly showEmptyGroups?: boolean
 
+  /** Search temporarily reveals collapsed sections without changing preferences. */
+  // eslint-disable-next-line react/no-unused-prop-types
+  readonly collapsedGroupIds?: ReadonlySet<string>
+
   /** The selected item. */
   readonly selectedItem: T | null
 
@@ -685,6 +689,10 @@ function createStateUpdate<T extends IFilterListItem>(
 
     if (!items.length && !(props.showEmptyGroups && !filter)) {
       continue
+    }
+
+    if (!filter && props.collapsedGroupIds?.has(group.identifier)) {
+      items = []
     }
 
     groupIndices.push(idx)

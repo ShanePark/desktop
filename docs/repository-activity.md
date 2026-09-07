@@ -150,7 +150,7 @@ yarn compile:dev
 
 The first runner has 45 checks, including real temporary Git repositories,
 repeat edits, staged changes, deletions, renames, ignored output, symlinks,
-worktrees, persistence, sorting, failures and concurrency. The second has 16
+worktrees, persistence, sorting, failures and concurrency. The second has 18
 wiring checks that execute the modified TSX with stubbed React/DOM and Git
 services; it is not a real Electron GUI test. The Jest adapter includes both
 runners and a seven-case group/commit runner in the normal unit suite.
@@ -160,3 +160,9 @@ check multiple projects edited in an external editor, name filtering while
 sorted, selection/keyboard navigation, unavailable repositories, and scrolling
 with a large repository list. This change does not address inherited Electron
 or other dependency maintenance in the older Linux fork.
+
+Group headings show a chevron and repository count, with indented repository rows.
+Click a heading to collapse or expand it. Visibility, custom group order and
+repository assignments are saved together and restored on restart. Searching
+temporarily reveals matching repositories in collapsed groups; clearing search
+restores the saved visibility. Heading toggles are inactive during search.

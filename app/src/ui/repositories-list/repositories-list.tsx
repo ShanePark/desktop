@@ -47,6 +47,7 @@ import {
   assignRepository,
   removeRepositoryGroup,
   moveRepositoryGroup,
+  toggleRepositoryGroup,
   WorkingGroup,
   RepositoryGroupsChangedEvent,
   Ungrouped,
@@ -146,6 +147,7 @@ export class RepositoriesList extends React.Component<
   private activityTimer: number | undefined
   private draggedRepository: number | null = null
   private draggedGroup: string | null = null
+  private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
 
   /**
@@ -357,6 +359,9 @@ export class RepositoriesList extends React.Component<
     const identifier = id as RepositoryGroupIdentifier
     const label = this.getGroupLabel(identifier)
 
+    const searching = this.props.filterText.length > 0
+    const collapsed =
+      !searching && (this.state.organization.collapsed ?? []).includes(id)
     const canDrop = id !== WorkingGroup
     return (
       <div
@@ -397,7 +402,27 @@ export class RepositoriesList extends React.Component<
             </button>
           </TooltippedContent>
         )}
-        <span className="repository-group-label">{label}</span>
+        <button
+          type="button"
+          className="repository-group-toggle"
+          data-group={id}
+          aria-expanded={!collapsed}
+          aria-disabled={searching}
+          aria-label={
+            searching
+              ? `${label}, expanded while searching`
+              : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
+          }
+          onClick={this.onGroupToggle}
+        >
+          <Octicon
+            symbol={collapsed ? octicons.chevronRight : octicons.chevronDown}
+          />
+          <span className="repository-group-label">{label}</span>
+          <span className="repository-group-count">
+            {this.groupCounts.get(id) ?? 0}
+          </span>
+        </button>
         {this.state.organization.groups.some(g => g.id === id) && (
           <button
             type="button"
@@ -411,6 +436,16 @@ export class RepositoriesList extends React.Component<
         )}
       </div>
     )
+  }
+
+  private onGroupToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    const id = event.currentTarget.dataset.group
+    if (id && !this.props.filterText) {
+      this.updateOrganization(
+        toggleRepositoryGroup(this.state.organization, id)
+      )
+    }
   }
 
   private onRepositoryDragStart = (event: React.DragEvent<HTMLDivElement>) => {
@@ -716,6 +751,9 @@ export class RepositoriesList extends React.Component<
       '_LocalActivity_',
       this.state.organization
     )
+    this.groupCounts = new Map(
+      groups.map(group => [group.identifier, group.items.length])
+    )
     const selectedItem =
       groups
         .flatMap(group => group.items)
@@ -727,6 +765,7 @@ export class RepositoriesList extends React.Component<
         <SectionFilterList<IRepositoryListItem>
           renderPreList={this.renderGroupError}
           showEmptyGroups={!this.state.activityPreferences.onlyUncommitted}
+          collapsedGroupIds={new Set(this.state.organization.collapsed ?? [])}
           rowHeight={RowHeight}
           selectedItem={selectedItem}
           filterText={this.props.filterText}

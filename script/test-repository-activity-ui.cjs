@@ -237,6 +237,30 @@ test('group reorder persists, preserves assignments, and keeps fixed sections at
   Assert.equal(moveRepositoryGroup(value, 'group-a', 'group-a'), value)
   picker.updateOrganization(original)
 })
+test('collapse survives recreation and reordering without changing membership', () => {
+  const original = picker.state.organization
+  const id = original.groups[0].id
+  picker.onGroupToggle({ currentTarget: { dataset: { group: id } }, stopPropagation() {} })
+  picker.onGroupToggle({ currentTarget: { dataset: { group: '_Working_' } }, stopPropagation() {} })
+  const fresh = new RepositoriesList(props)
+  Assert.deepEqual(fresh.state.organization.collapsed, [id, '_Working_'])
+  Assert.deepEqual(fresh.state.organization.assignments, original.assignments)
+  const { moveRepositoryGroup, removeRepositoryGroup, readRepositoryOrganization } = load(Path.join(root, 'app/src/lib/repository-activity/organization.ts'))
+  Assert.deepEqual(moveRepositoryGroup(fresh.state.organization, id, '_Ungrouped_').collapsed, [id, '_Working_'])
+  Assert.deepEqual(removeRepositoryGroup(fresh.state.organization, id).collapsed, ['_Working_'])
+  const invalid = { ...fresh.state.organization, collapsed: [id, id, '_Working_', 'unknown', 2] }
+  Assert.deepEqual(readRepositoryOrganization({ getItem: () => JSON.stringify(invalid) }).collapsed, [id, '_Working_'])
+  picker.updateOrganization(original)
+})
+test('collapsed headers remain available and search reveals items temporarily', () => {
+  const group = { identifier: 'group-test', items: rows }
+  const options = { ...listProps, groups: [group], filterText: '', renderGroupHeader: () => null, collapsedGroupIds: new Set(['group-test']) }
+  const collapsed = new SectionFilterList(options)
+  Assert.deepEqual(visible(collapsed), [])
+  Assert.equal(collapsed.state.rows.flat()[0].kind, 'group')
+  Assert.equal(visible(new SectionFilterList({ ...options, filterText: 'project' })).length, 2)
+  Assert.deepEqual(visible(new SectionFilterList(options)), [])
+})
 test('inactive window does not start scheduled scans; focus does', () => {
   const before = picker.activityMonitor.refreshes
   document.hasFocus = () => false
