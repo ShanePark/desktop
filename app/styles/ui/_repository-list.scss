@@ -221,6 +221,12 @@
     min-width: 0;
     -webkit-user-drag: element;
     padding-left: 16px;
+    &.repository-insert-before {
+      box-shadow: inset 0 2px var(--tab-bar-active-color);
+    }
+    &.repository-insert-after {
+      box-shadow: inset 0 -2px var(--tab-bar-active-color);
+    }
   }
 
   .repository-custom-group {
@@ -230,6 +236,10 @@
     background: var(--box-alt-background-color);
     border-bottom: 1px solid var(--box-border-color);
     font-weight: 600;
+    &[draggable='true'] {
+      cursor: grab;
+      -webkit-user-drag: element;
+    }
     overflow: hidden;
     align-items: center;
     justify-content: space-between;
@@ -297,38 +307,6 @@
     font-size: 10px;
     font-weight: normal;
     line-height: 16px;
-  }
-
-  .repository-group-grip {
-    display: inline-flex;
-    flex-shrink: 0;
-    margin-right: 4px;
-    button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px;
-      height: 20px;
-      padding: 0;
-      border: 0;
-      border-radius: 3px;
-      background: transparent;
-      color: var(--text-secondary-color);
-      cursor: grab;
-      -webkit-user-drag: element;
-      &:active {
-        cursor: grabbing;
-      }
-      &:hover,
-      &:focus-visible {
-        color: var(--text-color);
-        background: var(--list-item-selected-background-color);
-      }
-      .octicon {
-        width: 12px;
-        height: 12px;
-      }
-    }
   }
 
   .repository-group-menu {

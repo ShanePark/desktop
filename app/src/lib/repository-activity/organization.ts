@@ -8,6 +8,7 @@ const StorageKey = 'desktop.repository-groups.v1'
 
 export interface IRepositoryOrganization {
   readonly groups: ReadonlyArray<{ readonly id: string; readonly name: string }>
+  readonly repositoryOrder?: ReadonlyArray<string>
   readonly collapsed?: ReadonlyArray<string>
   readonly assignments: Readonly<Record<string, string>>
 }
@@ -53,6 +54,20 @@ export function readRepositoryOrganization(
         )
         return {
           groups,
+          ...(Array.isArray(value.repositoryOrder)
+            ? {
+                repositoryOrder: Array.from(
+                  new Set<string>(
+                    value.repositoryOrder
+                      .filter(
+                        (path: unknown): path is string =>
+                          typeof path === 'string' && path.length > 0
+                      )
+                      .map(activityKey)
+                  )
+                ),
+              }
+            : {}),
           assignments: assignments as Record<string, string>,
           ...(Array.isArray(value.collapsed)
             ? {
@@ -187,4 +202,36 @@ export function toggleRepositoryGroup(
       ? collapsed.filter(g => g !== id)
       : [...collapsed, id],
   }
+}
+
+/** Move a repository family while preserving hidden repositories and group state. */
+export function moveRepository(
+  value: IRepositoryOrganization,
+  path: string,
+  target: string,
+  group: string,
+  position: 'before' | 'after',
+  fallbackOrder: ReadonlyArray<string>
+): IRepositoryOrganization {
+  path = activityKey(path)
+  target = activityKey(target)
+  if (
+    path === target ||
+    group === WorkingGroup ||
+    (group !== Ungrouped && !value.groups.some(g => g.id === group))
+  ) {
+    return value
+  }
+  const order = [
+    ...new Set([
+      ...(value.repositoryOrder ?? []),
+      ...fallbackOrder.map(activityKey),
+    ]),
+  ].filter(p => p !== path)
+  const index = order.indexOf(target)
+  if (index < 0) {
+    return value
+  }
+  order.splice(index + (position === 'after' ? 1 : 0), 0, path)
+  return { ...assignRepository(value, path, group), repositoryOrder: order }
 }

@@ -27,19 +27,19 @@ validation for empty, reserved, overly long, or duplicate names. Duplicate
 matching ignores surrounding whitespace, case, and Unicode compatibility
 variants. Cancel and Escape leave the group unchanged.
 
-Use the drag handle beside a custom group heading to reorder groups; the
+Drag a custom group heading to reorder groups; the
 insertion line shows whether it will land above or below the target heading.
-The **…** menu also has **Move group up/down**, and the focused handle accepts
-Up/Down arrow keys. Group order is saved; Working and Ungrouped stay fixed at
+The **…** menu also has **Move group up/down**, and the focused heading accepts
+Alt+Up/Down arrow keys. Group order is saved; Working and Ungrouped stay fixed at
 the top and bottom.
 
-The view options control sorting **within** these sections:
+The view options control sorting **within Working only**:
 
 - **Recent changes** (default): newest estimated local edit or HEAD commit
-  first, including clean repositories. A commit no longer sends a recently
-  edited repository back into alphabetical order.
+  first, including clean repositories with unpublished commits. A commit no
+  longer sends a recently edited repository back into alphabetical order.
 - **Uncommitted first**: dirty working copies first, then alphabetically.
-- **Name**: alphabetical order within Working and the saved groups.
+- **Name**: alphabetical order within Working.
 - **Uncommitted only**: show staged, unstaged, untracked, and conflicted changes.
   Unpushed commits alone do not satisfy this explicit filter.
 
@@ -150,10 +150,10 @@ yarn compile:dev
 
 The first runner has 45 checks, including real temporary Git repositories,
 repeat edits, staged changes, deletions, renames, ignored output, symlinks,
-worktrees, persistence, sorting, failures and concurrency. The second has 18
+worktrees, persistence, sorting, failures and concurrency. The second has 19
 wiring checks that execute the modified TSX with stubbed React/DOM and Git
 services; it is not a real Electron GUI test. The Jest adapter includes both
-runners and a seven-case group/commit runner in the normal unit suite.
+runners and an eight-case group/commit runner in the normal unit suite.
 
 Before merging, validate the full Electron build and actual UI on Linux:
 check multiple projects edited in an external editor, name filtering while
@@ -166,3 +166,10 @@ Click a heading to collapse or expand it. Visibility, custom group order and
 repository assignments are saved together and restored on restart. Searching
 temporarily reveals matching repositories in collapsed groups; clearing search
 restores the saved visibility. Heading toggles are inactive during search.
+
+Drag a custom group heading to reorder groups (or use Alt+Up/Down while its
+heading is focused, or its menu). There is no separate drag handle. Drag a
+repository above or below another to save its position and, across groups,
+its membership. Working alone uses the Sort by setting; custom groups and
+Ungrouped retain manual order, including after searching or returning from
+Working. New repositories follow saved entries in name order.

@@ -200,20 +200,41 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       : assigned && buckets.has(assigned)
       ? assigned
       : Ungrouped
-    buckets
-      .get(target)!
-      .push({
-        ...row,
-        workingGroupName:
-          target === WorkingGroup
-            ? organization.groups.find(g => g.id === assigned)?.name ??
-              'Ungrouped'
-            : undefined,
-      })
+    buckets.get(target)!.push({
+      ...row,
+      workingGroupName:
+        target === WorkingGroup
+          ? organization.groups.find(g => g.id === assigned)?.name ??
+            'Ungrouped'
+          : undefined,
+    })
   }
+  const ranks = new Map(
+    (organization.repositoryOrder ?? []).map((path, index) => [
+      activityKey(path),
+      index,
+    ])
+  )
   return [...buckets].map(([identifier, items]) => ({
     identifier: identifier as G,
-    items,
+    items:
+      identifier === WorkingGroup
+        ? items
+        : families(items)
+            .sort(
+              (a, b) =>
+                (ranks.get(activityKey(a[0].repository.path)) ??
+                  Number.MAX_SAFE_INTEGER) -
+                  (ranks.get(activityKey(b[0].repository.path)) ??
+                    Number.MAX_SAFE_INTEGER) || compareNames(a[0], b[0])
+            )
+            .flatMap(block => {
+              const root = block.find(row => row.worktree?.type !== 'linked')
+              const children = block
+                .filter(row => row !== root)
+                .sort(compareNames)
+              return root ? [root, ...children] : children
+            }),
   }))
 }
 

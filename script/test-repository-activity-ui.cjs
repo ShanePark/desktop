@@ -140,9 +140,9 @@ test('keyboard selection survives subsequent activity refreshes', () => {
   picker.setState({ activity: { ...picker.state.activity, checking: true } })
   Assert.equal(listElement().props.selectedItem.id, '2')
 })
-test('name sort retains Working and custom groups with text ranking', () => {
+test('name sort preserves Working and manual group order during search', () => {
   picker.onActivityPreferencesChanged({ sort: 'name', onlyUncommitted: false })
-  Assert.equal(listElement().props.preserveItemOrder, false)
+  Assert.equal(listElement().props.preserveItemOrder, true)
   Assert.equal(listElement().props.groups[0].identifier, '_Working_')
 })
 test('empty custom groups remain available as drop targets but search hides them', () => {
@@ -240,6 +240,7 @@ test('group reorder persists, preserves assignments, and keeps fixed sections at
 test('collapse survives recreation and reordering without changing membership', () => {
   const original = picker.state.organization
   const id = original.groups[0].id
+  picker.suppressClickUntil = 0
   picker.onGroupToggle({ currentTarget: { dataset: { group: id } }, stopPropagation() {} })
   picker.onGroupToggle({ currentTarget: { dataset: { group: '_Working_' } }, stopPropagation() {} })
   const fresh = new RepositoriesList(props)
@@ -260,6 +261,25 @@ test('collapsed headers remain available and search reveals items temporarily', 
   Assert.equal(collapsed.state.rows.flat()[0].kind, 'group')
   Assert.equal(visible(new SectionFilterList({ ...options, filterText: 'project' })).length, 2)
   Assert.deepEqual(visible(new SectionFilterList(options)), [])
+})
+test('repository row drops persist order and reject Working targets', () => {
+  const original = picker.state.organization
+  const group = original.groups[0].id
+  picker.assignGroup(repositories[0].path, group)
+  const event = working => ({ currentTarget: { dataset: { repositoryId: String(repositories[0].id), working: String(working) }, getBoundingClientRect: () => ({ top: 0, height: 29 }) }, clientY: 1, dataTransfer: {}, preventDefault() {}, stopPropagation() {} })
+  picker.draggedRepository = repositories[1].id
+  picker.onRepositoryDragOver(event(false))
+  Assert.equal(picker.state.dropPosition, 'before')
+  picker.onRepositoryDrop(event(false))
+  const saved = new RepositoriesList(props).state.organization
+  Assert.deepEqual(saved.repositoryOrder, [repositories[1].path, repositories[0].path])
+  Assert.equal(saved.assignments[repositories[1].path], group)
+  picker.draggedRepository = repositories[1].id
+  picker.onRepositoryDrop(event(true))
+  Assert.deepEqual(picker.state.organization, saved)
+  const header = picker.renderGroupHeader(group)
+  Assert.equal(header.props.draggable, true)
+  picker.updateOrganization(original)
 })
 test('inactive window does not start scheduled scans; focus does', () => {
   const before = picker.activityMonitor.refreshes

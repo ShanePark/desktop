@@ -47,6 +47,7 @@ import {
   assignRepository,
   removeRepositoryGroup,
   moveRepositoryGroup,
+  moveRepository,
   toggleRepositoryGroup,
   WorkingGroup,
   RepositoryGroupsChangedEvent,
@@ -111,6 +112,7 @@ interface IRepositoriesListState {
   readonly organization: IRepositoryOrganization
   readonly groupError: string | null
   readonly dropPosition: 'before' | 'after' | null
+  readonly dropRepository?: number | null
   readonly dropGroup: string | null
   readonly newRepositoryMenuExpanded: boolean
 }
@@ -302,8 +304,16 @@ export class RepositoriesList extends React.Component<
     return (
       <div
         key={repository.id}
-        className="repository-activity-row"
+        className={`repository-activity-row ${
+          this.state.dropRepository === repository.id
+            ? `repository-insert-${this.state.dropPosition}`
+            : ''
+        }`}
         data-repository-id={repository.id}
+        data-working={item.workingGroupName !== undefined}
+        onDragOver={this.onRepositoryDragOver}
+        onDragLeave={this.onGroupDragLeave}
+        onDrop={this.onRepositoryDrop}
         draggable={repository instanceof Repository}
         onDragStart={this.onRepositoryDragStart}
         onDragEnd={this.onRepositoryDragEnd}
@@ -380,28 +390,13 @@ export class RepositoriesList extends React.Component<
             : 'Uncommitted changes or commits not on any known remote branch'
         }
         data-group={id}
+        draggable={this.state.organization.groups.some(g => g.id === id)}
+        onDragStart={this.onGroupReorderStart}
+        onDragEnd={this.onRepositoryDragEnd}
         onDragOver={this.onGroupDragOver}
         onDragLeave={this.onGroupDragLeave}
         onDrop={this.onGroupDrop}
       >
-        {this.state.organization.groups.some(g => g.id === id) && (
-          <TooltippedContent
-            tooltip="Drag to reorder, or use the arrow keys"
-            className="repository-group-grip"
-          >
-            <button
-              type="button"
-              draggable={true}
-              data-group={id}
-              aria-label={`Reorder ${label} group`}
-              onDragStart={this.onGroupReorderStart}
-              onDragEnd={this.onRepositoryDragEnd}
-              onKeyDown={this.onGroupReorderKeyDown}
-            >
-              <Octicon symbol={octicons.grabber} />
-            </button>
-          </TooltippedContent>
-        )}
         <button
           type="button"
           className="repository-group-toggle"
@@ -414,6 +409,7 @@ export class RepositoriesList extends React.Component<
               : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
           }
           onClick={this.onGroupToggle}
+          onKeyDown={this.onGroupReorderKeyDown}
         >
           <Octicon
             symbol={collapsed ? octicons.chevronRight : octicons.chevronDown}
@@ -441,7 +437,7 @@ export class RepositoriesList extends React.Component<
   private onGroupToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     const id = event.currentTarget.dataset.group
-    if (id && !this.props.filterText) {
+    if (id && !this.props.filterText && Date.now() >= this.suppressClickUntil) {
       this.updateOrganization(
         toggleRepositoryGroup(this.state.organization, id)
       )
@@ -458,11 +454,69 @@ export class RepositoriesList extends React.Component<
     event.dataTransfer.effectAllowed = 'move'
   }
 
+  private onRepositoryDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    const id = Number(event.currentTarget.dataset.repositoryId)
+    if (
+      this.draggedRepository === null ||
+      this.draggedRepository === id ||
+      event.currentTarget.dataset.working === 'true'
+    ) {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    const dropPosition =
+      event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    if (
+      this.state.dropRepository !== id ||
+      this.state.dropPosition !== dropPosition
+    ) {
+      this.setState({ dropRepository: id, dropPosition, dropGroup: null })
+    }
+  }
+
+  private onRepositoryDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const source = this.props.repositories.find(
+      r => r.id === this.draggedRepository
+    )
+    const target = this.props.repositories.find(
+      r => r.id === Number(event.currentTarget.dataset.repositoryId)
+    )
+    if (source && target && event.currentTarget.dataset.working !== 'true') {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const group =
+        this.state.organization.assignments[activityKey(target.path)] ??
+        Ungrouped
+      const fallback = [...this.props.repositories]
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+            a.path.localeCompare(b.path)
+        )
+        .map(r => r.path)
+      this.updateOrganization(
+        moveRepository(
+          this.state.organization,
+          source.path,
+          target.path,
+          group,
+          event.clientY < rect.top + rect.height / 2 ? 'before' : 'after',
+          fallback
+        )
+      )
+    }
+    this.onRepositoryDragEnd()
+  }
+
   private onRepositoryDragEnd = () => {
     this.draggedRepository = null
     this.draggedGroup = null
     this.suppressClickUntil = Date.now() + 300
-    this.setState({ dropGroup: null, dropPosition: null })
+    this.setState({ dropGroup: null, dropPosition: null, dropRepository: null })
   }
 
   private onGroupDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -486,13 +540,13 @@ export class RepositoriesList extends React.Component<
         this.state.dropGroup !== id ||
         this.state.dropPosition !== dropPosition
       ) {
-        this.setState({ dropGroup: id, dropPosition })
+        this.setState({ dropGroup: id, dropPosition, dropRepository: null })
       }
     }
   }
 
   private onGroupDragLeave = () =>
-    this.setState({ dropGroup: null, dropPosition: null })
+    this.setState({ dropGroup: null, dropPosition: null, dropRepository: null })
 
   private onGroupDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -521,7 +575,7 @@ export class RepositoriesList extends React.Component<
     this.onRepositoryDragEnd()
   }
 
-  private onGroupReorderStart = (event: React.DragEvent<HTMLButtonElement>) => {
+  private onGroupReorderStart = (event: React.DragEvent<HTMLDivElement>) => {
     const id = event.currentTarget.dataset.group
     if (!id || !this.state.organization.groups.some(g => g.id === id)) {
       return
@@ -556,7 +610,11 @@ export class RepositoriesList extends React.Component<
     event: React.KeyboardEvent<HTMLButtonElement>
   ) => {
     const id = event.currentTarget.dataset.group
-    if (id && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    if (
+      id &&
+      event.altKey &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    ) {
       event.preventDefault()
       event.stopPropagation()
       const list = event.currentTarget.closest('.repository-list')
@@ -564,7 +622,7 @@ export class RepositoriesList extends React.Component<
       this.setState({}, () =>
         list
           ?.querySelector<HTMLButtonElement>(
-            `button[data-group="${id}"][draggable]`
+            `button.repository-group-toggle[data-group="${id}"]`
           )
           ?.focus()
       )
@@ -774,13 +832,14 @@ export class RepositoriesList extends React.Component<
           renderGroupHeader={this.renderGroupHeader}
           onItemClick={this.onItemClick}
           onSelectionChanged={this.onListSelectionChanged}
-          preserveItemOrder={this.state.activityPreferences.sort !== 'name'}
+          preserveItemOrder={true}
           renderPostFilter={this.renderPostFilter}
           renderNoItems={this.renderNoItems}
           groups={groups}
           invalidationProps={{
             organization: this.state.organization,
             dropGroup: this.state.dropGroup,
+            dropRepository: this.state.dropRepository,
             dropPosition: this.state.dropPosition,
             activity: this.state.activity,
             activityPreferences: this.state.activityPreferences,
