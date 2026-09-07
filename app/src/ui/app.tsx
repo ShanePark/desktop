@@ -132,6 +132,7 @@ import { CommitOneLine } from '../models/commit'
 import { CommitDragElement } from './drag-elements/commit-drag-element'
 import classNames from 'classnames'
 import { MoveToApplicationsFolder } from './move-to-applications-folder'
+import { RepositoryGroupDialog } from './repositories-list/repository-group-dialog'
 import { ChangeRepositoryAlias } from './change-repository-alias/change-repository-alias-dialog'
 import { ThankYou } from './thank-you'
 import {
@@ -2080,6 +2081,13 @@ export class App extends React.Component<IAppProps, IAppState> {
           />
         )
       }
+      case PopupType.RepositoryGroupEditor:
+        return (
+          <RepositoryGroupDialog
+            groupId={popup.groupId}
+            onDismissed={onPopupDismissedFn}
+          />
+        )
       case PopupType.ChangeRepositoryAlias: {
         return (
           <ChangeRepositoryAlias

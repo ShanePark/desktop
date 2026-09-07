@@ -96,6 +96,8 @@ export class RepositoryActivityMonitor {
             // An unavailable repository is not a clean repository. Preserve its
             // last known activity, but expose the failure to the view.
             results.set(key, {
+              lastCommitAt: previous?.lastCommitAt,
+              unpushedCount: previous?.unpushedCount,
               changedFilesCount: previous?.changedFilesCount ?? 0,
               fingerprint: previous?.fingerprint ?? '',
               fileModifiedAt: previous?.fileModifiedAt ?? null,

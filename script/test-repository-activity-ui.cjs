@@ -50,6 +50,7 @@ function load(path) {
     if (spec === 'memoize-one') return fn => fn
     if (!spec.startsWith('.')) return require(spec)
     const target = Path.resolve(Path.dirname(path), spec)
+    if (target.endsWith('/models/popup')) return { PopupType: { RepositoryGroupEditor: 'RepositoryGroupEditor' } }
     if (target.endsWith('/models/repository')) return { Repository }
     if (target.endsWith('/group-repositories')) return grouping
     if (target.endsWith('/repository-activity/monitor')) return { RepositoryActivityMonitor: Monitor }
@@ -63,8 +64,8 @@ function load(path) {
       InvalidRowIndexPath: { section: -1, row: -1 },
       rowIndexPathEquals: (a, b) => a.section === b.section && a.row === b.row,
     }
-    if (/repository-activity\/(status|list|preferences)$/.test(target)) return load(`${target}.ts`)
-    if (target.endsWith('/repository-activity-toolbar') || target.endsWith('/section-filter-list')) return load(`${target}.tsx`)
+    if (/repository-activity\/(status|list|preferences|organization)$/.test(target)) return load(`${target}.ts`)
+    if (target.endsWith('/repository-group-dialog') || target.endsWith('/repository-activity-toolbar') || target.endsWith('/section-filter-list')) return load(`${target}.tsx`)
     return {}
   }
   mod._compile(output.outputText, path)
@@ -96,6 +97,7 @@ const listeners = new Map()
 let tick
 let cleared = false
 global.window = {
+  dispatchEvent: event => listeners.get(event.type)?.(),
   addEventListener: (k, v) => listeners.set(k, v), removeEventListener: k => listeners.delete(k),
   setInterval: (fn, interval) => { Assert.equal(interval, 15000); tick = fn; return 1 },
   clearInterval: () => { cleared = true },
@@ -105,16 +107,19 @@ global.document = {
   addEventListener: (k, v) => listeners.set(k, v), removeEventListener: k => listeners.delete(k),
 }
 const { RepositoriesList } = load(Path.join(root, 'app/src/ui/repositories-list/repositories-list.tsx'))
+const { RepositoryGroupDialog } = load(Path.join(root, 'app/src/ui/repositories-list/repository-group-dialog.tsx'))
 const { activityKey } = load(Path.join(root, 'app/src/lib/repository-activity/status.ts'))
 const repositories = rows.map(r => r.repository)
-const props = { repositories, selectedRepository: repositories[0], recentRepositories: [], localRepositoryStateLookup: new Map(), filterText: '', onSelectionChanged: () => {}, dispatcher: {} }
+const props = { repositories, selectedRepository: repositories[0], recentRepositories: [], localRepositoryStateLookup: new Map(), filterText: '', onSelectionChanged: () => {}, dispatcher: { showPopup: popup => { props.lastPopup = popup } } }
 const picker = new RepositoriesList(props)
 const listElement = () => picker.render().props.children[0]
 const snapshot = count => ({ changedFilesCount: count, fingerprint: 'a'.repeat(64), fileModifiedAt: 100, lastChangedAt: count ? 100 : null, checkedAt: 1000, error: false })
-test('picker opts into recent-local-change ordering and renders toolbar', () => {
+test('picker opts into recent-local-change ordering and renders compact options', () => {
   Assert.equal(picker.state.activityPreferences.sort, 'recent')
   Assert.equal(listElement().props.preserveItemOrder, true)
   Assert.equal(typeof listElement().props.renderPreList, 'function')
+  const postFilter = listElement().props.renderPostFilter()
+  Assert.equal(postFilter.props.children.length, 2)
 })
 test('mount scans every registered repository despite active filters', () => {
   picker.props = { ...props, filterText: 'z-project' }
@@ -135,10 +140,102 @@ test('keyboard selection survives subsequent activity refreshes', () => {
   picker.setState({ activity: { ...picker.state.activity, checking: true } })
   Assert.equal(listElement().props.selectedItem.id, '2')
 })
-test('original grouping restores original text ranking', () => {
+test('name sort retains Working and custom groups with text ranking', () => {
   picker.onActivityPreferencesChanged({ sort: 'name', onlyUncommitted: false })
   Assert.equal(listElement().props.preserveItemOrder, false)
-  Assert.equal(listElement().props.groups[0].identifier, 'Original')
+  Assert.equal(listElement().props.groups[0].identifier, '_Working_')
+})
+test('empty custom groups remain available as drop targets but search hides them', () => {
+  const groups = [{ identifier: 'empty', items: [] }, { identifier: 'repos', items: rows }]
+  const list = new SectionFilterList({ ...listProps, groups, filterText: '', showEmptyGroups: true })
+  Assert.equal(list.state.rows[0][0].identifier, 'empty')
+  const searched = new SectionFilterList({ ...listProps, groups, filterText: 'project', showEmptyGroups: true })
+  Assert.equal(searched.state.rows.length, 1)
+})
+test('create, rename, drag, and delete persist assignments while Working has priority', () => {
+  picker.props = { ...props, filterText: '' }
+  picker.onCreateGroup()
+  Assert.equal(props.lastPopup.type, 'RepositoryGroupEditor')
+  const dialog = new RepositoryGroupDialog({ groupId: null, onDismissed() {} })
+  dialog.onNameChanged('Projects')
+  dialog.save()
+  const group = picker.state.organization.groups.find(g => g.name === 'Projects')
+  Assert.ok(group)
+  const rename = new RepositoryGroupDialog({ groupId: group.id, onDismissed() {} })
+  rename.onNameChanged('Personal')
+  rename.save()
+  Assert.equal(picker.state.organization.groups.find(g => g.id === group.id).name, 'Personal')
+  const header = picker.renderGroupHeader(group.id)
+  picker.draggedRepository = repositories[1].id
+  header.props.onDrop({ currentTarget: { dataset: { group: group.id } }, preventDefault() {}, stopPropagation() {} })
+  Assert.equal(picker.state.organization.assignments[activityKey(repositories[1].path)], group.id)
+  Assert.equal(listElement().props.groups[0].identifier, '_Working_')
+  Assert.equal(listElement().props.groups[0].items[0].id, '2')
+  Assert.equal(listElement().props.groups[0].items[0].workingGroupName, 'Personal')
+  const clean = snapshot(0)
+  picker.activityMonitor.notify({ repositories: new Map(repositories.map(r => [activityKey(r.path), clean])), checking: false, completed: 2, total: 2 })
+  Assert.equal(listElement().props.groups.find(g => g.identifier === group.id).items[0].id, '2')
+  const nextPicker = new RepositoriesList(props)
+  Assert.equal(nextPicker.state.organization.assignments[activityKey(repositories[1].path)], group.id)
+  const { removeRepositoryGroup } = load(Path.join(root, 'app/src/lib/repository-activity/organization.ts'))
+  picker.updateOrganization(removeRepositoryGroup(picker.state.organization, group.id))
+  Assert.equal(listElement().props.groups.find(g => g.identifier === '_Ungrouped_').items.length, 2)
+})
+test('group dialog rejects empty, reserved, case, whitespace, and Unicode duplicates', () => {
+  let dismissed = false
+  const dialog = new RepositoryGroupDialog({ groupId: null, onDismissed() { dismissed = true } })
+  for (const name of ['', '  ', 'WORKING', 'Ungrouped', ' SHANE ', 'ｓｈａｎｅ', 'a'.repeat(81)]) {
+    dialog.onNameChanged(name)
+    dialog.save()
+    Assert.ok(dialog.state.saveError, name)
+    Assert.equal(dismissed, false)
+  }
+  Assert.ok(dialog.state.edited)
+})
+test('group dialog revalidates on save and preserves concurrent assignments', () => {
+  const dialog = new RepositoryGroupDialog({ groupId: null, onDismissed() {} })
+  dialog.onNameChanged('Concurrent')
+  const other = new RepositoryGroupDialog({ groupId: null, onDismissed() {} })
+  other.onNameChanged('Concurrent'); other.save()
+  dialog.save()
+  Assert.match(dialog.state.saveError, /already exists/)
+  const { readRepositoryOrganization, removeRepositoryGroup, saveRepositoryOrganization } = load(Path.join(root, 'app/src/lib/repository-activity/organization.ts'))
+  const current = readRepositoryOrganization(localStorage)
+  const id = current.groups.find(g => g.name === 'Concurrent').id
+  saveRepositoryOrganization(localStorage, removeRepositoryGroup(current, id))
+})
+test('group dialog stays open on storage failure and cancel does not create anything', () => {
+  const before = new Map(storage)
+  let dismissed = false
+  const dialog = new RepositoryGroupDialog({ groupId: null, onDismissed() { dismissed = true } })
+  dialog.onNameChanged('Not saved')
+  const original = localStorage.setItem
+  localStorage.setItem = () => { throw new Error('full') }
+  try { dialog.save() } finally { localStorage.setItem = original }
+  Assert.equal(dismissed, false)
+  Assert.match(dialog.state.saveError, /Could not save/)
+  dialog.props.onDismissed()
+  Assert.deepEqual(storage, before)
+})
+test('group reorder persists, preserves assignments, and keeps fixed sections at the ends', () => {
+  const { moveRepositoryGroup } = load(Path.join(root, 'app/src/lib/repository-activity/organization.ts'))
+  const original = picker.state.organization
+  const value = { groups: [{ id: 'group-a', name: 'A' }, { id: 'group-b', name: 'B' }, { id: 'group-c', name: 'C' }], assignments: { '/fixture/repo': 'group-a' } }
+  picker.updateOrganization(value)
+  picker.moveGroup('group-c', 'up')
+  Assert.deepEqual(picker.state.organization.groups.map(g => g.id), ['group-a', 'group-c', 'group-b'])
+  picker.draggedGroup = 'group-a'
+  picker.onGroupDrop({ currentTarget: { dataset: { group: '_Ungrouped_' }, getBoundingClientRect: () => ({ top: 0, height: 29 }) }, clientY: 0, preventDefault() {}, stopPropagation() {} })
+  Assert.deepEqual(picker.state.organization.groups.map(g => g.id), ['group-c', 'group-b', 'group-a'])
+  Assert.deepEqual(picker.state.organization.assignments, value.assignments)
+  Assert.deepEqual(new RepositoriesList(props).state.organization.groups, picker.state.organization.groups)
+  const groups = listElement().props.groups
+  Assert.equal(groups[0].identifier, '_Working_')
+  Assert.equal(groups[groups.length - 1].identifier, '_Ungrouped_')
+  Assert.equal(moveRepositoryGroup(value, 'group-a', '_Working_'), value)
+  Assert.equal(moveRepositoryGroup(value, '_Working_', 'group-a'), value)
+  Assert.equal(moveRepositoryGroup(value, 'group-a', 'group-a'), value)
+  picker.updateOrganization(original)
 })
 test('inactive window does not start scheduled scans; focus does', () => {
   const before = picker.activityMonitor.refreshes

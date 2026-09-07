@@ -24,8 +24,15 @@ export function readActivityPreferences(
 ): IActivityPreferences {
   try {
     const value = JSON.parse(storage.getItem(PreferencesKey) ?? 'null')
-    if (value !== null && typeof value === 'object' && isActivitySort(value.sort)) {
-      return { sort: value.sort, onlyUncommitted: value.onlyUncommitted === true }
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      isActivitySort(value.sort)
+    ) {
+      return {
+        sort: value.sort,
+        onlyUncommitted: value.onlyUncommitted === true,
+      }
     }
   } catch {
     // Restricted or malformed storage must not make the repository list fail.
@@ -88,6 +95,13 @@ export function readActivityCache(
         continue
       }
       result.set(path, {
+        lastCommitAt: isTimestamp(value.lastCommitAt)
+          ? value.lastCommitAt
+          : null,
+        unpushedCount:
+          Number.isInteger(value.unpushedCount) && value.unpushedCount >= 0
+            ? value.unpushedCount
+            : 0,
         changedFilesCount: value.changedFilesCount,
         fingerprint: value.fingerprint,
         fileModifiedAt: value.fileModifiedAt,

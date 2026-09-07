@@ -3,6 +3,8 @@ import { promises as Fs } from 'fs'
 import * as Path from 'path'
 
 export interface IActivitySample {
+  readonly lastCommitAt?: number | null
+  readonly unpushedCount?: number
   readonly changedFilesCount: number
   readonly fingerprint: string
   /** A filesystem estimate, not a Git commit or last-opened timestamp. */
@@ -30,7 +32,9 @@ export function activityKey(path: string): string {
 }
 
 /** Parse porcelain v1 -z. In this format rename destinations precede sources. */
-export function parseActivityStatus(output: string): ReadonlyArray<IStatusPath> {
+export function parseActivityStatus(
+  output: string
+): ReadonlyArray<IStatusPath> {
   if (output === '') {
     return []
   }
@@ -89,8 +93,8 @@ export async function sampleRepositoryActivity(
   readStatus: ReadStatus,
   now = Date.now()
 ): Promise<IActivitySample> {
-  const entries = [...parseActivityStatus(await readStatus(root))].sort((a, b) =>
-    a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+  const entries = [...parseActivityStatus(await readStatus(root))].sort(
+    (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
   )
   const details: string[] = new Array(entries.length)
   let fileModifiedAt: number | null = null
@@ -113,7 +117,13 @@ export async function sampleRepositoryActivity(
           // evidence of the last edit inside it (nor are build-cache writes).
           metadata = ['directory', stat.mode]
         } else {
-          metadata = [stat.mtimeMs, stat.ctimeMs, stat.size, stat.mode, stat.ino]
+          metadata = [
+            stat.mtimeMs,
+            stat.ctimeMs,
+            stat.size,
+            stat.mode,
+            stat.ino,
+          ]
           const mtime = Math.min(now, stat.mtimeMs)
           if (Number.isFinite(mtime) && mtime > 0) {
             fileModifiedAt = Math.max(fileModifiedAt ?? 0, mtime)
@@ -136,7 +146,9 @@ export async function sampleRepositoryActivity(
       ])
     }
   }
-  await Promise.all(Array.from({ length: Math.min(8, entries.length) }, inspect))
+  await Promise.all(
+    Array.from({ length: Math.min(8, entries.length) }, inspect)
+  )
 
   return {
     changedFilesCount: entries.length,
@@ -170,5 +182,11 @@ export function advanceActivity(
           : checkedAt
     }
   }
+  lastChangedAt =
+    Math.max(
+      lastChangedAt ?? 0,
+      sample.lastCommitAt ?? 0,
+      sample.lastCommitAt !== undefined ? previous?.lastChangedAt ?? 0 : 0
+    ) || null
   return { ...sample, lastChangedAt, checkedAt, error: false }
 }

@@ -1,3 +1,5 @@
+import { WorkingGroup, Ungrouped } from './organization'
+import type { IRepositoryOrganization } from './organization'
 import { activityKey } from './status'
 import type { IRepositoryActivity } from './status'
 import type { IActivityPreferences } from './preferences'
@@ -11,6 +13,10 @@ export interface IActivityRow {
   }
   readonly worktree?: { readonly type: string; readonly path: string } | null
   readonly text: ReadonlyArray<string>
+  readonly aheadBehind?: {
+    readonly ahead: number
+    readonly behind: number
+  } | null
   readonly changedFilesCount: number
   readonly needsDisambiguation: boolean
 }
@@ -38,7 +44,8 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   groups: ReadonlyArray<IActivityListGroup<T, G>>,
   activities: ReadonlyMap<string, IRepositoryActivity>,
   preferences: IActivityPreferences,
-  activityGroup: G
+  activityGroup: G,
+  organization?: IRepositoryOrganization
 ): ReadonlyArray<IActivityListGroup<T, G>> {
   const snapshot = (row: T) => activities.get(activityKey(activityPath(row)))
   const dirty = (row: T) =>
@@ -54,7 +61,17 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     if (activity === undefined || activity.error || activity.checkedAt === 0) {
       return row
     }
-    return { ...row, changedFilesCount: activity.changedFilesCount }
+    return {
+      ...row,
+      changedFilesCount: activity.changedFilesCount,
+      aheadBehind:
+        activity.unpushedCount === undefined
+          ? row.aheadBehind
+          : {
+              ahead: activity.unpushedCount,
+              behind: row.aheadBehind?.behind ?? 0,
+            },
+    }
   }
 
   const families = (items: ReadonlyArray<T>): T[][] => {
@@ -79,7 +96,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       .filter(rows => rows.length > 0)
   }
 
-  if (preferences.sort === 'name') {
+  if (preferences.sort === 'name' && organization === undefined) {
     return groups
       .map(group => ({ ...group, items: families(group.items).flat() }))
       .filter(group => group.items.length > 0)
@@ -110,24 +127,28 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   const latest = (rows: ReadonlyArray<T>) =>
     rows.reduce(
       (time, row) =>
-        dirty(row) ? Math.max(time, snapshot(row)?.lastChangedAt ?? 0) : time,
+        Math.max(
+          time,
+          snapshot(row)?.lastChangedAt ?? 0,
+          snapshot(row)?.lastCommitAt ?? 0
+        ),
       0
     )
   const compareRows = (a: T, b: T) => {
-    const changed = Number(dirty(b)) - Number(dirty(a))
-    const recent =
-      preferences.sort === 'recent' && dirty(a) && dirty(b)
-        ? latest([b]) - latest([a])
+    const changed =
+      preferences.sort === 'dirty-first' || !organization
+        ? Number(dirty(b)) - Number(dirty(a))
         : 0
+    const recent = preferences.sort === 'recent' ? latest([b]) - latest([a]) : 0
     return changed || recent || compareNames(a, b)
   }
 
   blocks.sort((a, b) => {
-    const changed = Number(b.some(dirty)) - Number(a.some(dirty))
-    const recent =
-      preferences.sort === 'recent' && a.some(dirty) && b.some(dirty)
-        ? latest(b) - latest(a)
+    const changed =
+      preferences.sort === 'dirty-first' || !organization
+        ? Number(b.some(dirty)) - Number(a.some(dirty))
         : 0
+    const recent = preferences.sort === 'recent' ? latest(b) - latest(a) : 0
     return changed || recent || compareNames(a[0], b[0])
   })
 
@@ -136,7 +157,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     const children = block.filter(row => row !== root).sort(compareRows)
     return root === undefined ? children : [root, ...children]
   })
-  if (rows.length === 0) {
+  if (rows.length === 0 && organization === undefined) {
     return []
   }
   // Owner grouping can no longer distinguish equal names.
@@ -147,17 +168,53 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     paths.add(activityKey(activityPath(row)))
     names.set(name, paths)
   }
-  return [
-    {
-      identifier: activityGroup,
-      items: rows.map(row => ({
+  const annotated = rows.map(row => ({
+    ...row,
+    needsDisambiguation:
+      row.needsDisambiguation ||
+      (names.get(label(row).toLowerCase())?.size ?? 0) > 1,
+  }))
+  if (organization === undefined) {
+    return [{ identifier: activityGroup, items: annotated }]
+  }
+  // Each repository appears once. Working takes precedence over its saved
+  // group, which remains assigned when it becomes clean and pushed again.
+  const working = new Set(
+    annotated
+      .filter(
+        row =>
+          dirty(row) ||
+          (snapshot(row)?.unpushedCount ?? row.aheadBehind?.ahead ?? 0) > 0
+      )
+      .map(row => row.repository.id)
+  )
+  const buckets = new Map<string, T[]>([
+    [WorkingGroup, []],
+    ...organization.groups.map(g => [g.id, []] as [string, T[]]),
+    [Ungrouped, []],
+  ])
+  for (const row of annotated) {
+    const assigned = organization.assignments[activityKey(row.repository.path)]
+    const target = working.has(row.repository.id)
+      ? WorkingGroup
+      : assigned && buckets.has(assigned)
+      ? assigned
+      : Ungrouped
+    buckets
+      .get(target)!
+      .push({
         ...row,
-        needsDisambiguation:
-          row.needsDisambiguation ||
-          (names.get(label(row).toLowerCase())?.size ?? 0) > 1,
-      })),
-    },
-  ]
+        workingGroupName:
+          target === WorkingGroup
+            ? organization.groups.find(g => g.id === assigned)?.name ??
+              'Ungrouped'
+            : undefined,
+      })
+  }
+  return [...buckets].map(([identifier, items]) => ({
+    identifier: identifier as G,
+    items,
+  }))
 }
 
 /** Restore activity order after text matching has ranked results by score. */

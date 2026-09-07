@@ -58,6 +58,10 @@ interface ISectionFilterListProps<T extends IFilterListItem> {
   // eslint-disable-next-line react/no-unused-prop-types
   readonly preserveItemOrder?: boolean
 
+  /** Keep empty headers as repository group drop targets when not searching. */
+  // eslint-disable-next-line react/no-unused-prop-types
+  readonly showEmptyGroups?: boolean
+
   /** The selected item. */
   readonly selectedItem: T | null
 
@@ -679,7 +683,7 @@ function createStateUpdate<T extends IFilterListItem>(
       })
     }
 
-    if (!items.length) {
+    if (!items.length && !(props.showEmptyGroups && !filter)) {
       continue
     }
 

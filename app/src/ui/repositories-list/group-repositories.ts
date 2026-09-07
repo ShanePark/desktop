@@ -26,6 +26,7 @@ export type RepositoryGroupIdentifier = KnownRepositoryGroup | string
 export type Repositoryish = Repository | CloningRepository
 
 export interface IRepositoryListItem extends IFilterListItem {
+  readonly workingGroupName?: string
   readonly text: ReadonlyArray<string>
   readonly id: string
   readonly repository: Repositoryish

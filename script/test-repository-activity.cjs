@@ -36,7 +36,7 @@ const withRepo = async run => {
 async function main() {
   const compiled = await Fs.mkdtemp(Path.join(Os.tmpdir(), 'desktop-activity-js-'))
   try {
-    for (const name of ['status', 'monitor', 'preferences', 'list']) {
+    for (const name of ['status', 'monitor', 'preferences', 'organization', 'list']) {
       const source = await Fs.readFile(Path.join(root, 'app/src/lib/repository-activity', `${name}.ts`), 'utf8')
       const result = Ts.transpileModule(source, {
         fileName: `${name}.ts`, reportDiagnostics: true,

@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { TooltippedContent } from '../lib/tooltipped-content'
 
 import { RepositoryListItem } from './repository-list-item'
 import {
@@ -20,7 +21,6 @@ import { showContextualMenu } from '../../lib/menu-item'
 import { IMenuItem } from '../../lib/menu-item'
 import { PopupType } from '../../models/popup'
 import { encodePathAsUrl } from '../../lib/path'
-import { TooltippedContent } from '../lib/tooltipped-content'
 import memoizeOne from 'memoize-one'
 import { KeyboardShortcut } from '../keyboard-shortcut/keyboard-shortcut'
 import { generateRepositoryListContextMenu } from '../repositories-list/repository-list-item-context-menu'
@@ -40,6 +40,17 @@ import {
 } from '../../lib/repository-activity/preferences'
 import { activityKey } from '../../lib/repository-activity/status'
 import { projectActivityGroups } from '../../lib/repository-activity/list'
+import {
+  IRepositoryOrganization,
+  readRepositoryOrganization,
+  saveRepositoryOrganization,
+  assignRepository,
+  removeRepositoryGroup,
+  moveRepositoryGroup,
+  WorkingGroup,
+  RepositoryGroupsChangedEvent,
+  Ungrouped,
+} from '../../lib/repository-activity/organization'
 
 const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 
@@ -96,6 +107,10 @@ interface IRepositoriesListState {
   readonly selectedItem: IRepositoryListItem | null
   readonly activity: IActivityState
   readonly activityPreferences: IActivityPreferences
+  readonly organization: IRepositoryOrganization
+  readonly groupError: string | null
+  readonly dropPosition: 'before' | 'after' | null
+  readonly dropGroup: string | null
   readonly newRepositoryMenuExpanded: boolean
 }
 
@@ -129,6 +144,9 @@ export class RepositoriesList extends React.Component<
 > {
   private readonly activityMonitor: RepositoryActivityMonitor
   private activityTimer: number | undefined
+  private draggedRepository: number | null = null
+  private draggedGroup: string | null = null
+  private suppressClickUntil = 0
 
   /**
    * A memoized function for grouping repositories for display
@@ -163,6 +181,10 @@ export class RepositoriesList extends React.Component<
     const initialActivity = readActivityCache(localStorage)
     this.state = {
       selectedItem: null,
+      organization: readRepositoryOrganization(localStorage),
+      groupError: null,
+      dropGroup: null,
+      dropPosition: null,
       newRepositoryMenuExpanded: false,
       activityPreferences: readActivityPreferences(localStorage),
       activity: {
@@ -188,15 +210,16 @@ export class RepositoriesList extends React.Component<
     this.updateActivityPaths()
     this.refreshActivity()
     window.addEventListener('focus', this.refreshActivity)
+    window.addEventListener(RepositoryGroupsChangedEvent, this.onGroupsChanged)
     document.addEventListener('visibilitychange', this.refreshVisibleActivity)
     this.activityTimer = window.setInterval(this.refreshVisibleActivity, 15000)
   }
 
-  public componentDidUpdate(previous: IRepositoriesListProps) {
-    if (previous.selectedRepository !== this.props.selectedRepository) {
+  public componentDidUpdate(prevProps: IRepositoriesListProps) {
+    if (prevProps.selectedRepository !== this.props.selectedRepository) {
       this.setState({ selectedItem: null })
     }
-    if (previous.repositories !== this.props.repositories) {
+    if (prevProps.repositories !== this.props.repositories) {
       if (this.updateActivityPaths()) {
         this.refreshActivity()
       }
@@ -207,7 +230,14 @@ export class RepositoriesList extends React.Component<
     this.activityMonitor.stop()
     window.clearInterval(this.activityTimer)
     window.removeEventListener('focus', this.refreshActivity)
-    document.removeEventListener('visibilitychange', this.refreshVisibleActivity)
+    window.removeEventListener(
+      RepositoryGroupsChangedEvent,
+      this.onGroupsChanged
+    )
+    document.removeEventListener(
+      'visibilitychange',
+      this.refreshVisibleActivity
+    )
   }
 
   private updateActivityPaths() {
@@ -240,9 +270,7 @@ export class RepositoriesList extends React.Component<
   private renderActivityToolbar = () => (
     <RepositoryActivityToolbar
       preferences={this.state.activityPreferences}
-      activity={this.state.activity}
       onChange={this.onActivityPreferencesChanged}
-      onRefresh={this.refreshActivity}
     />
   )
 
@@ -256,16 +284,15 @@ export class RepositoriesList extends React.Component<
     if (activity.error) {
       return 'Local activity: unavailable (not treated as clean)'
     }
-    if (activity.changedFilesCount === 0) {
-      return 'No uncommitted changes'
-    }
     const time =
       activity.lastChangedAt === null
         ? 'last change time unknown'
         : `last local change ${new Date(
             activity.lastChangedAt
           ).toLocaleString()} (estimated)`
-    return `${activity.changedFilesCount} changed files; ${time}`
+    return `${activity.changedFilesCount} changed files; ${
+      activity.unpushedCount ?? 0
+    } unpushed commits; ${time}`
   }
 
   private renderItem = (item: IRepositoryListItem, matches: IMatches) => {
@@ -274,20 +301,47 @@ export class RepositoriesList extends React.Component<
       <div
         key={repository.id}
         className="repository-activity-row"
-        title={this.getActivityDescription(item)}
+        data-repository-id={repository.id}
+        draggable={repository instanceof Repository}
+        onDragStart={this.onRepositoryDragStart}
+        onDragEnd={this.onRepositoryDragEnd}
       >
-        <RepositoryListItem
-          repository={repository}
-          needsDisambiguation={item.needsDisambiguation}
-          matches={matches}
-          aheadBehind={item.aheadBehind}
-          changedFilesCount={item.changedFilesCount}
-        />
+        {item.workingGroupName !== undefined && (
+          <TooltippedContent
+            className="repository-working-group"
+            tooltip={`Group: ${item.workingGroupName}`}
+          >
+            <span>{item.workingGroupName}</span>
+          </TooltippedContent>
+        )}
+        <TooltippedContent
+          className="repository-activity-tooltip"
+          tooltip={this.getActivityDescription(item)}
+          tagName="div"
+        >
+          <RepositoryListItem
+            repository={repository}
+            needsDisambiguation={item.needsDisambiguation}
+            matches={matches}
+            aheadBehind={item.aheadBehind}
+            changedFilesCount={item.changedFilesCount}
+          />
+        </TooltippedContent>
       </div>
     )
   }
 
   private getGroupLabel(identifier: RepositoryGroupIdentifier) {
+    if (identifier === WorkingGroup) {
+      return 'Working'
+    }
+    if (identifier === Ungrouped) {
+      return 'Ungrouped'
+    }
+    const custom = this.state.organization.groups.find(g => g.id === identifier)
+    if (custom) {
+      return custom.name
+    }
     if (identifier === '_LocalActivity_') {
       return 'Local working copies'
     } else if (identifier === KnownRepositoryGroup.Enterprise) {
@@ -303,20 +357,282 @@ export class RepositoriesList extends React.Component<
     const identifier = id as RepositoryGroupIdentifier
     const label = this.getGroupLabel(identifier)
 
+    const canDrop = id !== WorkingGroup
     return (
-      <TooltippedContent
-        key={identifier}
-        className="filter-list-group-header"
-        tooltip={label}
-        onlyWhenOverflowed={true}
-        tagName="div"
+      <div
+        key={id}
+        className={`filter-list-group-header repository-custom-group ${
+          this.state.dropGroup === id
+            ? this.state.dropPosition
+              ? `group-insert-${this.state.dropPosition}`
+              : 'drop-target'
+            : ''
+        }`}
+        role="group"
+        aria-label={
+          canDrop
+            ? `${label} — drag a repository here to assign it`
+            : 'Uncommitted changes or commits not on any known remote branch'
+        }
+        data-group={id}
+        onDragOver={this.onGroupDragOver}
+        onDragLeave={this.onGroupDragLeave}
+        onDrop={this.onGroupDrop}
       >
-        {label}
-      </TooltippedContent>
+        {this.state.organization.groups.some(g => g.id === id) && (
+          <TooltippedContent
+            tooltip="Drag to reorder, or use the arrow keys"
+            className="repository-group-grip"
+          >
+            <button
+              type="button"
+              draggable={true}
+              data-group={id}
+              aria-label={`Reorder ${label} group`}
+              onDragStart={this.onGroupReorderStart}
+              onDragEnd={this.onRepositoryDragEnd}
+              onKeyDown={this.onGroupReorderKeyDown}
+            >
+              <Octicon symbol={octicons.grabber} />
+            </button>
+          </TooltippedContent>
+        )}
+        <span className="repository-group-label">{label}</span>
+        {this.state.organization.groups.some(g => g.id === id) && (
+          <button
+            type="button"
+            className="repository-group-menu"
+            aria-label={`Manage ${label} group`}
+            data-group={id}
+            onClick={this.onGroupMenu}
+          >
+            …
+          </button>
+        )}
+      </div>
     )
   }
 
+  private onRepositoryDragStart = (event: React.DragEvent<HTMLDivElement>) => {
+    const id = Number(event.currentTarget.dataset.repositoryId)
+    if (!this.props.repositories.some(r => r.id === id)) {
+      return
+    }
+    this.draggedRepository = id
+    event.dataTransfer.setData('application/x-desktop-repository', String(id))
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  private onRepositoryDragEnd = () => {
+    this.draggedRepository = null
+    this.draggedGroup = null
+    this.suppressClickUntil = Date.now() + 300
+    this.setState({ dropGroup: null, dropPosition: null })
+  }
+
+  private onGroupDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    const id = event.currentTarget.dataset.group
+    if (
+      id &&
+      id !== WorkingGroup &&
+      (this.draggedRepository !== null || this.draggedGroup !== null)
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'move'
+      const rect = event.currentTarget.getBoundingClientRect()
+      const dropPosition =
+        this.draggedGroup === null
+          ? null
+          : id === Ungrouped || event.clientY < rect.top + rect.height / 2
+          ? 'before'
+          : 'after'
+      if (
+        this.state.dropGroup !== id ||
+        this.state.dropPosition !== dropPosition
+      ) {
+        this.setState({ dropGroup: id, dropPosition })
+      }
+    }
+  }
+
+  private onGroupDragLeave = () =>
+    this.setState({ dropGroup: null, dropPosition: null })
+
+  private onGroupDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const id = event.currentTarget.dataset.group
+    const repository = this.props.repositories.find(
+      r => r.id === this.draggedRepository
+    )
+    if (id && this.draggedGroup !== null) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const position =
+        id === Ungrouped || event.clientY < rect.top + rect.height / 2
+          ? 'before'
+          : 'after'
+      this.updateOrganization(
+        moveRepositoryGroup(
+          this.state.organization,
+          this.draggedGroup,
+          id,
+          position
+        )
+      )
+    } else if (id && id !== WorkingGroup && repository) {
+      this.assignGroup(repository.path, id)
+    }
+    this.onRepositoryDragEnd()
+  }
+
+  private onGroupReorderStart = (event: React.DragEvent<HTMLButtonElement>) => {
+    const id = event.currentTarget.dataset.group
+    if (!id || !this.state.organization.groups.some(g => g.id === id)) {
+      return
+    }
+    event.stopPropagation()
+    this.draggedGroup = id
+    this.draggedRepository = null
+    event.dataTransfer.setData('application/x-desktop-repository-group', id)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  private moveGroup = (id: string, direction: 'up' | 'down') => {
+    const index = this.state.organization.groups.findIndex(g => g.id === id)
+    if (index < 0) {
+      return
+    }
+    const target =
+      this.state.organization.groups[index + (direction === 'up' ? -1 : 1)]
+    if (target) {
+      this.updateOrganization(
+        moveRepositoryGroup(
+          this.state.organization,
+          id,
+          target.id,
+          direction === 'up' ? 'before' : 'after'
+        )
+      )
+    }
+  }
+
+  private onGroupReorderKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ) => {
+    const id = event.currentTarget.dataset.group
+    if (id && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault()
+      event.stopPropagation()
+      const list = event.currentTarget.closest('.repository-list')
+      this.moveGroup(id, event.key === 'ArrowUp' ? 'up' : 'down')
+      this.setState({}, () =>
+        list
+          ?.querySelector<HTMLButtonElement>(
+            `button[data-group="${id}"][draggable]`
+          )
+          ?.focus()
+      )
+    }
+  }
+
+  private onGroupMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    const id = event.currentTarget.dataset.group
+    if (!id) {
+      return
+    }
+    const index = this.state.organization.groups.findIndex(g => g.id === id)
+    void showContextualMenu([
+      {
+        label: 'Move group up',
+        enabled: index > 0,
+        action: () => this.moveGroup(id, 'up'),
+      },
+      {
+        label: 'Move group down',
+        enabled:
+          index >= 0 && index < this.state.organization.groups.length - 1,
+        action: () => this.moveGroup(id, 'down'),
+      },
+      { type: 'separator' },
+      {
+        label: 'Rename group…',
+        action: () =>
+          this.props.dispatcher.showPopup({
+            type: PopupType.RepositoryGroupEditor,
+            groupId: id,
+          }),
+      },
+      {
+        label: 'Delete group (keep repositories)',
+        action: () =>
+          this.updateOrganization(
+            removeRepositoryGroup(this.state.organization, id)
+          ),
+      },
+    ])
+  }
+
+  private onGroupsChanged = () => {
+    this.setState({
+      organization: readRepositoryOrganization(localStorage),
+      groupError: null,
+    })
+  }
+
+  private onListDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (this.draggedRepository === null && this.draggedGroup === null) {
+      return
+    }
+    const scroll = event.currentTarget.querySelector('.ReactVirtualized__Grid')
+    if (scroll) {
+      const rect = scroll.getBoundingClientRect()
+      if (event.clientY < rect.top + 36) {
+        scroll.scrollTop -= 18
+      } else if (event.clientY > rect.bottom - 36) {
+        scroll.scrollTop += 18
+      }
+    }
+  }
+
+  private updateOrganization = (organization: IRepositoryOrganization) => {
+    try {
+      saveRepositoryOrganization(localStorage, organization)
+      this.setState({ organization, groupError: null })
+      return true
+    } catch {
+      this.setState({
+        groupError: 'Could not save repository groups. Please try again.',
+      })
+      return false
+    }
+  }
+
+  private assignGroup = (path: string, group: string) => {
+    this.updateOrganization(
+      assignRepository(this.state.organization, path, group)
+    )
+  }
+
+  private onCreateGroup = () => {
+    this.props.dispatcher.showPopup({
+      type: PopupType.RepositoryGroupEditor,
+      groupId: null,
+    })
+  }
+
+  private renderGroupError = () =>
+    this.state.groupError ? (
+      <div className="repository-group-error" role="alert">
+        {this.state.groupError}
+      </div>
+    ) : null
+
   private onItemClick = (item: IRepositoryListItem) => {
+    if (Date.now() < this.suppressClickUntil) {
+      return
+    }
     const hasIndicator =
       item.changedFilesCount > 0 ||
       (item.aheadBehind !== null
@@ -347,15 +663,33 @@ export class RepositoriesList extends React.Component<
       shellLabel: this.props.shellLabel,
     })
 
-    showContextualMenu(items)
+    showContextualMenu([
+      {
+        label: 'Move to group',
+        submenu: [
+          ...this.state.organization.groups.map(g => ({
+            label: g.name,
+            action: () => this.assignGroup(item.repository.path, g.id),
+          })),
+          {
+            label: 'Ungrouped',
+            action: () => this.assignGroup(item.repository.path, Ungrouped),
+          },
+        ],
+      },
+      { type: 'separator' },
+      ...items,
+    ])
   }
 
   private getItemAriaLabel = (item: IRepositoryListItem) =>
-    `${item.repository.name}, ${this.getActivityDescription(item)}`
+    `${item.repository.name}${
+      item.workingGroupName ? `, group ${item.workingGroupName}` : ''
+    }, ${this.getActivityDescription(item)}`
   private getGroupAriaLabelGetter =
     (groups: ReadonlyArray<IFilterListGroup<IRepositoryListItem>>) =>
     (group: number) =>
-      groups[group].identifier
+      this.getGroupLabel(groups[group].identifier)
 
   public render() {
     const baseGroups = this.getRepositoryGroups(
@@ -379,7 +713,8 @@ export class RepositoriesList extends React.Component<
       originalGroups,
       this.state.activity.repositories,
       this.state.activityPreferences,
-      '_LocalActivity_'
+      '_LocalActivity_',
+      this.state.organization
     )
     const selectedItem =
       groups
@@ -388,8 +723,10 @@ export class RepositoriesList extends React.Component<
       this.getSelectedListItem(groups, this.props.selectedRepository)
 
     return (
-      <div className="repository-list">
+      <div className="repository-list" onDragOverCapture={this.onListDragOver}>
         <SectionFilterList<IRepositoryListItem>
+          renderPreList={this.renderGroupError}
+          showEmptyGroups={!this.state.activityPreferences.onlyUncommitted}
           rowHeight={RowHeight}
           selectedItem={selectedItem}
           filterText={this.props.filterText}
@@ -398,12 +735,14 @@ export class RepositoriesList extends React.Component<
           renderGroupHeader={this.renderGroupHeader}
           onItemClick={this.onItemClick}
           onSelectionChanged={this.onListSelectionChanged}
-          renderPreList={this.renderActivityToolbar}
           preserveItemOrder={this.state.activityPreferences.sort !== 'name'}
           renderPostFilter={this.renderPostFilter}
           renderNoItems={this.renderNoItems}
           groups={groups}
           invalidationProps={{
+            organization: this.state.organization,
+            dropGroup: this.state.dropGroup,
+            dropPosition: this.state.dropPosition,
             activity: this.state.activity,
             activityPreferences: this.state.activityPreferences,
             repositories: this.props.repositories,
@@ -417,20 +756,25 @@ export class RepositoriesList extends React.Component<
     )
   }
 
-  private onListSelectionChanged = (selectedItem: IRepositoryListItem | null) => {
+  private onListSelectionChanged = (
+    selectedItem: IRepositoryListItem | null
+  ) => {
     this.setState({ selectedItem })
   }
 
   private renderPostFilter = () => {
     return (
-      <Button
-        className="new-repository-button"
-        onClick={this.onNewRepositoryButtonClick}
-        ariaExpanded={this.state.newRepositoryMenuExpanded}
-      >
-        Add
-        <Octicon symbol={octicons.triangleDown} />
-      </Button>
+      <React.Fragment>
+        {this.renderActivityToolbar()}
+        <Button
+          className="new-repository-button"
+          onClick={this.onNewRepositoryButtonClick}
+          ariaExpanded={this.state.newRepositoryMenuExpanded}
+        >
+          Add
+          <Octicon symbol={octicons.triangleDown} />
+        </Button>
+      </React.Fragment>
     )
   }
 
@@ -464,6 +808,8 @@ export class RepositoriesList extends React.Component<
 
   private onNewRepositoryButtonClick = () => {
     const items: IMenuItem[] = [
+      { label: 'New group…', action: this.onCreateGroup },
+      { type: 'separator' },
       {
         label: __DARWIN__ ? 'Clone Repository…' : 'Clone repository…',
         action: this.onCloneRepository,

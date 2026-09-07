@@ -5,31 +5,61 @@ this fork with Desktop Plus or upgrade the application's dependencies.
 
 ## Using the repository picker
 
-Open **Current Repository**. The controls above the name search provide:
+Open **Current Repository**. The list always shows these sections in order:
 
+- **Working**: repositories with uncommitted changes or local commits not
+  reachable from any known remote branch, regardless of their assigned group.
+- **Your groups**: create groups using **Add → New group…**. A `shane` group is provided initially.
+- **Ungrouped**: repositories that have not been assigned to a group.
+
+Drag a repository onto a group heading (including an empty group), or use its
+right-click **Move to group** menu. Dragging into Ungrouped removes an assignment.
+Working is automatic and cannot be a manual drop target. A repository appears
+once; its saved assignment is retained while it is Working, and restored once
+its changes are committed and pushed. Use the group heading's **…** menu to
+rename or delete a group. Deleting a group leaves all repositories registered
+and moves its assignments to Ungrouped. Group names and assignments persist
+across app restarts. Working rows show their saved group in a compact tag on
+the left (or Ungrouped).
+
+Creating or renaming a group opens a separate modal dialog with immediate
+validation for empty, reserved, overly long, or duplicate names. Duplicate
+matching ignores surrounding whitespace, case, and Unicode compatibility
+variants. Cancel and Escape leave the group unchanged.
+
+Use the drag handle beside a custom group heading to reorder groups; the
+insertion line shows whether it will land above or below the target heading.
+The **…** menu also has **Move group up/down**, and the focused handle accepts
+Up/Down arrow keys. Group order is saved; Working and Ungrouped stay fixed at
+the top and bottom.
+
+The view options control sorting **within** these sections:
+
+- **Recent changes** (default): newest estimated local edit or HEAD commit
+  first, including clean repositories. A commit no longer sends a recently
+  edited repository back into alphabetical order.
+- **Uncommitted first**: dirty working copies first, then alphabetically.
+- **Name**: alphabetical order within Working and the saved groups.
 - **Uncommitted only**: show staged, unstaged, untracked, and conflicted changes.
-  Commits waiting to be pushed do not, by themselves, satisfy this filter.
-- **Recent local changes** (default): put dirty working copies first, newest
-  estimated local change first, then clean working copies alphabetically.
-- **Uncommitted first**: dirty working copies first, alphabetically within each
-  category.
-- **Name / original groups**: restore the original owner/Enterprise/Other and
-  Recent groups and original text-search relevance ordering.
-- **Refresh**: recheck all registered working copies without a network fetch.
+  Unpushed commits alone do not satisfy this explicit filter.
 
-Name search composes with the status filter. In activity sort modes, search
-keeps activity order instead of replacing it with fuzzy relevance order.
-Activity modes flatten owner groups and remove duplicate Recent rows; they do
-not change the saved repository list. Hover a row for its estimated change
-time or an explanation that its status/time is unavailable. Keyboard selection
-is tracked by row ID across refreshes, rather than by its changing position.
+Name search composes with the filter. In activity modes it preserves activity
+order instead of fuzzy relevance order. Empty headings stay available for
+assignment when not filtering. Keyboard selection follows the repository ID
+as activity updates or assignments move a row. Hover a row to see changed-file
+and unpushed-commit counts and its activity time.
+
+Unpushed counts cover all local branches and detached HEAD, using locally
+stored remote refs. No network fetch is made by this scanner, so a push from
+another computer is reflected after the usual fetch. A repository with no
+remote counts its local commits as unpublished.
 
 ## Scanning and storage
 
 Every registered repository path is scanned, not just the selected repository
 or filtered rows. Separately registered linked worktrees are checked by their
 own path. Scans run when the picker mounts, on window focus, when the registered
-paths change, manually, and every 15 seconds while the picker is mounted and
+paths change, and every 15 seconds while the picker is mounted and
 the document is visible and focused. This is polling, not continuous monitoring
 while the picker is closed. An already started pass may finish after focus is
 lost. Closing the picker cancels queued work and suppresses late UI callbacks;
@@ -40,7 +70,7 @@ index locking disabled, and fsmonitor hooks disabled for this read. It launches
 at most two status commands at a time, each with a 15-second timeout and a
 16-MiB output limit. File-stat concurrency is also bounded. There is no fetch,
 staging, commit, reset, file-content hashing, or recursive filesystem watcher.
-Only paths reported as changed by Git are inspected, so ignored build output
+Only file paths reported as changed by Git are inspected, so ignored build output
 does not promote a repository.
 
 Settings and a bounded metadata cache are stored in this installation's
@@ -63,7 +93,9 @@ When possible, a newer file mtime is used even after the picker was closed.
 Otherwise an observed fingerprint change uses its observation time. Thus
 staging, deletion, permission changes, timestamp-preserving edits, checkout,
 restore, or external tools can affect this **estimate**. It is not a precise
-history of human edits, nor is it commit time or the last time a repo was opened.
+history of human edits or the last time a repo was opened. The ordering also
+uses the current HEAD committer timestamp and retains previously observed local
+activity when a working copy becomes clean.
 An initially discovered deletion has no recoverable timestamp and sorts after
 dirty entries with known times. Directory/index mtimes are not used as a false
 proxy. Dirty submodules count as changes, but repeated edits inside an already
@@ -72,21 +104,56 @@ itself to monitor its files independently.
 
 ## Verification
 
+### Local development with the Dock icon
+
+Run `yarn build:local` after a set of UI changes is ready to review. This builds
+the production app, replaces the local Dock runtime only after a successful
+build, and restarts the app automatically. A failed build leaves the Dock app
+running with the previous version. This is an explicit build command, not a
+watcher that rebuilds on every file save.
+
+For initial setup, run `python3 script/local-desktop.py install` after a
+successful production build. It updates the existing
+`github-desktop-local.desktop` launcher, preserving its Dock pin, and starts
+the app. The Dock uses `.local-desktop/current`, separate from `dist`, so
+rebuilding does not remove the running app's files. To deploy an already built
+app again, run `python3 script/local-desktop.py deploy`.
+
+Runtime files and launch output (`.local-desktop/launch.log`) are ignored by
+Git. Deployment retains the preceding runtime and asks only this checkout's
+GitHub Desktop process to exit before starting the new version.
+
+On this Ubuntu workstation, `/etc/apparmor.d/github-desktop-local` grants
+`userns` to
+`/home/shane/Documents/git/shane/desktop/.local-desktop/release-*/github-desktop`.
+This administrator-approved AppArmor exception lets Chromium use its namespace
+sandbox when started from the Dock. It persists across reboots and covers new
+local releases without another administrator prompt. Moving this checkout
+requires updating the exception. The system-wide namespace restriction remains
+enabled; the launcher does not add `--no-sandbox`.
+
+A `FATAL:setuid_sandbox_host` error in the user journal indicates the exception
+is missing or does not match the executable path. An agent-launched process
+alone is not a valid Dock check because it can inherit a different AppArmor
+profile. Confirm a visible window and `github-desktop-local (unconfined)` in
+the main process's `/proc/PID/attr/current` when checking this workstation.
+
 With this repository's dependencies installed, run:
 
 ```sh
 node script/test-repository-activity.cjs
 node script/test-repository-activity-ui.cjs
+node script/test-repository-groups.cjs
 yarn test:unit --runInBand app/test/unit/repository-activity-test.ts
 yarn compile:dev
 ```
 
 The first runner has 45 checks, including real temporary Git repositories,
 repeat edits, staged changes, deletions, renames, ignored output, symlinks,
-worktrees, persistence, sorting, failures and concurrency. The second has 10
+worktrees, persistence, sorting, failures and concurrency. The second has 16
 wiring checks that execute the modified TSX with stubbed React/DOM and Git
 services; it is not a real Electron GUI test. The Jest adapter includes both
-runners in the normal unit suite.
+runners and a seven-case group/commit runner in the normal unit suite.
 
 Before merging, validate the full Electron build and actual UI on Linux:
 check multiple projects edited in an external editor, name filtering while
