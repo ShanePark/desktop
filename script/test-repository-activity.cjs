@@ -293,7 +293,9 @@ async function main() {
     test('source includes the bundled-Git timeout, buffer cap and no-optional-locks', async () => {
       const source = await Fs.readFile(Path.join(root, 'app/src/lib/git/repository-activity.ts'), 'utf8')
       Assert.match(source, /--no-optional-locks/)
-      Assert.match(source, /timeout:\s*15000/)
+      Assert.match(source, /setTimeout\(\(\) => controller\.abort\(\), 15000\)/)
+      Assert.match(source, /signal:\s*controller\.signal/)
+      Assert.match(source, /clearTimeout\(timeout\)/)
       Assert.match(source, /maxBuffer:/)
       Assert.match(source, /from ['"]\.\/core['"]/)
     })
