@@ -281,6 +281,64 @@ test('repository row drops persist order and reject Working targets', () => {
   Assert.equal(header.props.draggable, true)
   picker.updateOrganization(original)
 })
+test('list-wide drop slots include gaps, section bodies and list edges', () => {
+  const { findRepositoryDropSlot: find } = load(Path.join(root, 'app/src/lib/repository-activity/drag.ts'))
+  const rows = [
+    { top: 0, bottom: 29, group: '_Working_' },
+    { top: 29, bottom: 58, group: '_Working_', repositoryId: 1 },
+    { top: 58, bottom: 87, group: 'group-a' },
+    { top: 87, bottom: 116, group: 'group-a', repositoryId: 2 },
+    { top: 120, bottom: 149, group: 'group-a', repositoryId: 3 },
+    { top: 149, bottom: 178, group: 'group-b' },
+    { top: 178, bottom: 207, group: 'group-b', repositoryId: 4 },
+    { top: 207, bottom: 236, group: '_Ungrouped_' },
+  ]
+  Assert.equal(find(rows, 45, null, 4), null)
+  Assert.equal(find(rows, 118, null, 4).repositoryId, 2)
+  Assert.equal(find(rows, 118, null, 4).position, 'after')
+  Assert.equal(find(rows, 86, null, 4).repositoryId, 2)
+  Assert.equal(find(rows, 135, 'group-b', null).group, 'group-a')
+  Assert.equal(find(rows, 135, 'group-b', null).position, 'after')
+  Assert.equal(find(rows, 290, null, 4).group, '_Ungrouped_')
+  Assert.equal(find(rows, 290, 'group-a', null).group, 'group-b')
+  Assert.equal(find(rows, 290, 'group-a', null).position, 'after')
+})
+test('list-wide drop slots reject Working for both drag types', () => {
+  const { findRepositoryDropSlot: find } = load(Path.join(root, 'app/src/lib/repository-activity/drag.ts'))
+  const rows = [
+    { top: 0, bottom: 29, group: '_Working_' },
+    { top: 29, bottom: 58, group: '_Working_', repositoryId: 1 },
+    { top: 58, bottom: 87, group: 'group-a' },
+    { top: 87, bottom: 116, group: 'group-a', repositoryId: 2 },
+    { top: 116, bottom: 145, group: '_Ungrouped_' },
+  ]
+  Assert.equal(find(rows, 10, 'group-a', null), null)
+  Assert.equal(find(rows, 45, 'group-a', null), null)
+  Assert.equal(find(rows, 10, null, 2), null)
+  Assert.equal(find(rows, 45, null, 2), null)
+})
+test('list-wide drop on the source repository row is a no-op', () => {
+  const { findRepositoryDropSlot: find } = load(Path.join(root, 'app/src/lib/repository-activity/drag.ts'))
+  const rows = [
+    { top: 0, bottom: 29, group: '_Working_' },
+    { top: 29, bottom: 58, group: 'group-a' },
+    { top: 58, bottom: 87, group: 'group-a', repositoryId: 1 },
+    { top: 87, bottom: 116, group: 'group-b' },
+    { top: 116, bottom: 145, group: 'group-b', repositoryId: 2 },
+    { top: 145, bottom: 174, group: '_Ungrouped_' },
+  ]
+  Assert.equal(find(rows, 72, null, 1), null)
+  Assert.equal(find(rows, 130, null, 2), null)
+})
+test('container drop commits the previewed slot even over whitespace', () => {
+  const original = picker.state.organization
+  picker.draggedRepository = repositories[1].id
+  picker.dropSlot = { repositoryId: repositories[0].id, group: '_Ungrouped_', position: 'before', y: 100 }
+  picker.onListDrop({ preventDefault() {}, stopPropagation() {} })
+  Assert.deepEqual(picker.state.organization.repositoryOrder, [repositories[1].path, repositories[0].path])
+  Assert.equal(picker.dropSlot, null)
+  picker.updateOrganization(original)
+})
 test('inactive window does not start scheduled scans; focus does', () => {
   const before = picker.activityMonitor.refreshes
   document.hasFocus = () => false

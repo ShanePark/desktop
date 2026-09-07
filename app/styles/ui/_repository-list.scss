@@ -399,3 +399,29 @@
     }
   }
 }
+
+.repository-list {
+  position: relative;
+  .repository-drop-placeholder {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    height: 26px;
+    z-index: 10;
+    pointer-events: none;
+    border: 1px dashed var(--tab-bar-active-color);
+    border-radius: 4px;
+    background: var(--box-alt-background-color);
+    color: var(--text-secondary-color);
+    font-size: 11px;
+    line-height: 24px;
+    text-align: center;
+  }
+}
+
+// Each section has its own virtual grid. Let preview rows cross section edges,
+// while the outer scroll viewport continues to clip the list.
+.repository-drag-active .ReactVirtualized__Grid .ReactVirtualized__Grid,
+.repository-drag-active .ReactVirtualized__Grid .ReactVirtualized__Grid .ReactVirtualized__Grid__innerScrollContainer {
+  overflow: visible !important;
+}

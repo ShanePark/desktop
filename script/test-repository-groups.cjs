@@ -60,13 +60,22 @@ async function main() {
     assert.equal(sample.unpushedCount, 0)
     assert.equal(sample.lastCommitAt, committed.lastCommitAt)
   })
-  await test('unpublished commits on another local branch are included', async () => {
+  await test('only the checked-out branch contributes unpublished commits', async () => {
     git('checkout', '-b', 'topic')
     fs.writeFileSync(path.join(repo, 'file'), 'two'); git('commit', '-am', 'topic')
-    git('checkout', 'main')
     assert.equal((await readRepositoryActivity(repo)).unpushedCount, 1)
+    git('checkout', 'main')
+    assert.equal((await readRepositoryActivity(repo)).unpushedCount, 0)
     git('push', 'origin', 'topic')
     assert.equal((await readRepositoryActivity(repo)).unpushedCount, 0)
+  })
+  await test('configured upstream determines ahead count even when another remote branch contains HEAD', async () => {
+    git('checkout', 'topic')
+    git('branch', '--set-upstream-to=origin/main')
+    assert.equal((await readRepositoryActivity(repo)).unpushedCount, 1)
+    git('branch', '--set-upstream-to=origin/topic')
+    assert.equal((await readRepositoryActivity(repo)).unpushedCount, 0)
+    git('checkout', 'main')
   })
   await test('detached HEAD commits are included', async () => {
     git('checkout', '--detach')

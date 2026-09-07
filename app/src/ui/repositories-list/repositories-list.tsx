@@ -54,6 +54,11 @@ import {
   Ungrouped,
 } from '../../lib/repository-activity/organization'
 
+import {
+  findRepositoryDropSlot,
+  IRepositoryDropSlot,
+} from '../../lib/repository-activity/drag'
+
 const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 
 const recentRepositoriesThreshold = 7
@@ -149,6 +154,8 @@ export class RepositoriesList extends React.Component<
   private activityTimer: number | undefined
   private draggedRepository: number | null = null
   private draggedGroup: string | null = null
+  private dropSlot: IRepositoryDropSlot | null = null
+  private dragList: HTMLDivElement | null = null
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
 
@@ -231,6 +238,7 @@ export class RepositoriesList extends React.Component<
   }
 
   public componentWillUnmount() {
+    this.clearDropPreview()
     this.activityMonitor.stop()
     window.clearInterval(this.activityTimer)
     window.removeEventListener('focus', this.refreshActivity)
@@ -311,6 +319,13 @@ export class RepositoriesList extends React.Component<
         }`}
         data-repository-id={repository.id}
         data-working={item.workingGroupName !== undefined}
+        data-owner-group={
+          item.workingGroupName !== undefined
+            ? WorkingGroup
+            : this.state.organization.assignments[
+                activityKey(repository.path)
+              ] ?? Ungrouped
+        }
         onDragOver={this.onRepositoryDragOver}
         onDragLeave={this.onGroupDragLeave}
         onDrop={this.onRepositoryDrop}
@@ -387,7 +402,7 @@ export class RepositoriesList extends React.Component<
         aria-label={
           canDrop
             ? `${label} — drag a repository here to assign it`
-            : 'Uncommitted changes or commits not on any known remote branch'
+            : 'Uncommitted changes or unpushed commits on the current branch'
         }
         data-group={id}
         draggable={this.state.organization.groups.some(g => g.id === id)}
@@ -513,6 +528,9 @@ export class RepositoriesList extends React.Component<
   }
 
   private onRepositoryDragEnd = () => {
+    this.clearDropPreview()
+    this.dropSlot = null
+    this.dragList = null
     this.draggedRepository = null
     this.draggedGroup = null
     this.suppressClickUntil = Date.now() + 300
@@ -674,19 +692,146 @@ export class RepositoriesList extends React.Component<
     })
   }
 
+  private clearDropPreview = () => {
+    this.dragList?.classList.remove('repository-drag-active')
+    this.dragList?.querySelectorAll<HTMLElement>('.list-item').forEach(row => {
+      row.style.removeProperty('transform')
+    })
+    this.dragList?.querySelector('.repository-drop-placeholder')?.remove()
+  }
+
+  private onListDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (
+      event.relatedTarget instanceof Node &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return
+    }
+    this.clearDropPreview()
+    this.dropSlot = null
+  }
+
   private onListDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     if (this.draggedRepository === null && this.draggedGroup === null) {
       return
     }
-    const scroll = event.currentTarget.querySelector('.ReactVirtualized__Grid')
-    if (scroll) {
-      const rect = scroll.getBoundingClientRect()
-      if (event.clientY < rect.top + 36) {
-        scroll.scrollTop -= 18
-      } else if (event.clientY > rect.bottom - 36) {
-        scroll.scrollTop += 18
+    event.stopPropagation()
+    this.dragList = event.currentTarget
+    this.clearDropPreview()
+    const scroll = event.currentTarget.querySelector<HTMLElement>(
+      '.ReactVirtualized__Grid'
+    )
+    if (!scroll) {
+      return
+    }
+    const viewport = scroll.getBoundingClientRect()
+    if (event.clientY < viewport.top || event.clientY > viewport.bottom) {
+      this.dropSlot = null
+      return
+    }
+    if (event.clientY < viewport.top + 36) {
+      scroll.scrollTop -= 18
+    } else if (event.clientY > viewport.bottom - 36) {
+      scroll.scrollTop += 18
+    }
+    const elements = Array.from(
+      scroll.querySelectorAll<HTMLElement>(
+        '.repository-custom-group, .repository-activity-row'
+      )
+    )
+    const rows = elements.map(element => {
+      const rect = (
+        element.closest<HTMLElement>('.list-item') ?? element
+      ).getBoundingClientRect()
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        group: element.dataset.ownerGroup ?? element.dataset.group!,
+        repositoryId:
+          element.dataset.repositoryId === undefined
+            ? undefined
+            : Number(element.dataset.repositoryId),
+      }
+    })
+    const slot = findRepositoryDropSlot(
+      rows,
+      event.clientY,
+      this.draggedGroup,
+      this.draggedRepository
+    )
+    this.dropSlot = slot
+    if (!slot) {
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    this.dragList.classList.add('repository-drag-active')
+    // Shift row wrappers, leaving their layout positions stable for hit testing.
+    elements.forEach((element, index) => {
+      const row = element.closest<HTMLElement>('.list-item')
+      if (row) {
+        row.style.transform = `translateY(${
+          rows[index].top >= slot.y - 1 ? 14 : -14
+        }px)`
+      }
+    })
+    const placeholder = document.createElement('div')
+    placeholder.className = 'repository-drop-placeholder'
+    placeholder.style.top = `${
+      slot.y - this.dragList.getBoundingClientRect().top - 13
+    }px`
+    placeholder.textContent =
+      this.draggedGroup !== null ? 'Move group here' : 'Move repository here'
+    this.dragList.appendChild(placeholder)
+  }
+
+  private onListDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (this.draggedRepository === null && this.draggedGroup === null) {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const slot = this.dropSlot
+    if (slot) {
+      const source = this.props.repositories.find(
+        r => r.id === this.draggedRepository
+      )
+      const target = this.props.repositories.find(
+        r => r.id === slot.repositoryId
+      )
+      if (this.draggedGroup !== null) {
+        this.updateOrganization(
+          moveRepositoryGroup(
+            this.state.organization,
+            this.draggedGroup,
+            slot.group,
+            slot.position
+          )
+        )
+      } else if (source && target) {
+        const fallback = [...this.props.repositories]
+          .sort(
+            (a, b) =>
+              a.name.localeCompare(b.name, undefined, {
+                sensitivity: 'base',
+              }) || a.path.localeCompare(b.path)
+          )
+          .map(r => r.path)
+        this.updateOrganization(
+          moveRepository(
+            this.state.organization,
+            source.path,
+            target.path,
+            slot.group,
+            slot.position,
+            fallback
+          )
+        )
+      } else if (source) {
+        this.assignGroup(source.path, slot.group)
       }
     }
+    this.onRepositoryDragEnd()
   }
 
   private updateOrganization = (organization: IRepositoryOrganization) => {
@@ -819,7 +964,12 @@ export class RepositoriesList extends React.Component<
       this.getSelectedListItem(groups, this.props.selectedRepository)
 
     return (
-      <div className="repository-list" onDragOverCapture={this.onListDragOver}>
+      <div
+        className="repository-list"
+        onDragOverCapture={this.onListDragOver}
+        onDropCapture={this.onListDrop}
+        onDragLeave={this.onListDragLeave}
+      >
         <SectionFilterList<IRepositoryListItem>
           renderPreList={this.renderGroupError}
           showEmptyGroups={!this.state.activityPreferences.onlyUncommitted}

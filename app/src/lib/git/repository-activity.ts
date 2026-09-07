@@ -46,24 +46,32 @@ export async function readRepositoryActivity(path: string) {
       }
     )
   try {
-    // All local branches, including branches without upstreams. Remote refs
-    // are local snapshots: this scanner never fetches or contacts a server.
+    // Match the active branch: old local branches must not make it Working.
+    // Remote refs are local snapshots; this scanner never contacts a server.
     const commit = await read(
       ['log', '-1', '--format=%ct', 'HEAD'],
       new Set([0, 128])
     )
-    const unpublished = await read([
-      'rev-list',
-      '--count',
-      '--branches',
-      ...(commit.exitCode === 0 ? ['HEAD'] : []),
-      '--not',
-      '--remotes',
-    ])
+    let unpushedCount = 0
+    if (commit.exitCode === 0) {
+      const upstream = await read(
+        ['rev-parse', '--verify', '--quiet', '@{upstream}'],
+        new Set([0, 1, 128])
+      )
+      const unpublished = await read([
+        'rev-list',
+        '--count',
+        'HEAD',
+        '--not',
+        ...(upstream.exitCode === 0 ? [upstream.stdout.trim()] : ['--remotes']),
+        '--',
+      ])
+      unpushedCount = Number(unpublished.stdout.trim())
+    }
     const seconds = Number(commit.stdout.trim())
     return {
       ...sample,
-      unpushedCount: Number(unpublished.stdout.trim()),
+      unpushedCount,
       lastCommitAt:
         commit.exitCode === 0 && seconds > 0
           ? Math.min(Date.now(), seconds * 1000)
