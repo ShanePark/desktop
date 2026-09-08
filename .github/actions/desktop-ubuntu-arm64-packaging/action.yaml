@@ -1,0 +1,7 @@
+name: 'GitHub Desktop for Linux packaging for ARM64'
+description:
+  'Build the Linux ARM64 application in an Ubuntu 22.04 cross-packaging
+  environment.'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'

@@ -1,8 +1,11 @@
 import { StatsDatabase, ILaunchStats, IDailyMeasures } from './stats-database'
-import { getDotComAPIEndpoint } from '../api'
 import { getVersion } from '../../ui/lib/app-proxy'
 import { hasShownWelcomeFlow } from '../welcome'
-import { Account } from '../../models/account'
+import {
+  Account,
+  isDotComAccount,
+  isEnterpriseAccount,
+} from '../../models/account'
 import { getOS } from '../get-os'
 import { Repository } from '../../models/repository'
 import { merge } from '../../lib/merge'
@@ -10,6 +13,8 @@ import { getPersistedThemeName } from '../../ui/lib/application-theme'
 import { IUiActivityMonitor } from '../../ui/lib/ui-activity-monitor'
 import { Disposable } from 'event-kit'
 import {
+  showChangesFilterDefault,
+  showChangesFilterKey,
   showDiffCheckMarksDefault,
   showDiffCheckMarksKey,
   underlineLinksDefault,
@@ -37,6 +42,9 @@ import { getRendererGUID } from '../get-renderer-guid'
 import { ValidNotificationPullRequestReviewState } from '../valid-notification-pull-request-review'
 import { useExternalCredentialHelperKey } from '../trampoline/use-external-credential-helper'
 import { getUserAgent } from '../http'
+import { getHooksEnvEnabled } from '../hooks/config'
+import { parseModelKey } from '../copilot/byok'
+import { DefaultCopilotModel } from '../stores/copilot-store'
 
 type PullRequestReviewStatFieldInfix =
   | 'Approved'
@@ -235,10 +243,44 @@ const DefaultDailyMeasures: IDailyMeasures = {
   submoduleDiffViewedFromHistoryCount: 0,
   openSubmoduleFromDiffCount: 0,
   previewedPullRequestCount: 0,
+  typedInChangesFilterCount: 0,
+  appliesIncludedInCommitFilterCount: 0,
+  appliesExcludedFromCommitFilterCount: 0,
+  appliesNewFilesChangesFilterCount: 0,
+  appliesModifiedFilesChangesFilterCount: 0,
+  appliesDeletedFilesChangesFilterCount: 0,
+  appliesClearAllChangesListFilterCount: 0,
+  adjustedFiltersForHiddenChangesCount: 0,
+  enterpriseAccountCount: 0,
+  generateCommitMessageButtonClickCount: 0,
+  generateCommitMessageCount: 0,
+  generateCommitMessageUsedVerbatimCount: 0,
+  pushBlockedBySecretScanningCount: 0,
+  secretsDetectedOnPushCount: 0,
+  secretsDetectedOnPushBypassedCount: 0,
+  secretsDetectedOnPushBypassedAsFalsePositiveCount: 0,
+  secretsDetectedOnPushBypassedAsUsedInTestCount: 0,
+  secretsDetectedOnPushBypassedAsWillFixLaterCount: 0,
+  secretsDetectedOnPushDelegatedBypassLinkClickedCount: 0,
+  secretRemediationInstructionsLinkClickedCount: 0,
+  worktreeSwitchCount: 0,
+  worktreeCreatedCount: 0,
+  worktreeDeletedCount: 0,
+  worktreeMaxCount: 0,
+  initiateResolveConflictsWithCopilotCount: 0,
+  copilotConflictResolutionAcceptedCount: 0,
+  copilotConflictResolutionWithOverridesCount: 0,
+  copilotConflictResolutionSwitchToManualCount: 0,
+  copilotConflictResolutionStoppedCount: 0,
+  copilotConflictResolutionErrorCount: 0,
+  copilotConflictResolutionOver15sCount: 0,
+  copilotConflictResolutionOver30sCount: 0,
+  copilotConflictResolutionOver60sCount: 0,
+  copilotConflictResolutionOver120sCount: 0,
 }
 
 // A subtype of IDailyMeasures filtered to contain only its numeric properties
-type NumericMeasures = {
+export type NumericMeasures = {
   [P in keyof IDailyMeasures as IDailyMeasures[P] extends number
     ? P
     : never]: IDailyMeasures[P]
@@ -398,6 +440,17 @@ interface ICalculatedStats {
    * if the user has not yet made an active decision
    **/
   readonly useExternalCredentialHelper?: boolean | null
+
+  /**
+   * Whether or not the user has the filtering changes enabled
+   **/
+  readonly filteringChangesEnabled: boolean
+
+  /** Whether or not the user has the git hooks environment enabled */
+  readonly gitHooksEnvEnabled: boolean
+
+  /** The resolved model ID for Copilot conflict resolution */
+  readonly copilotConflictResolutionModel: string
 }
 
 type DailyStats = ICalculatedStats &
@@ -413,13 +466,7 @@ type DailyStats = ICalculatedStats &
  *
  */
 export interface IStatsStore {
-  increment: (
-    metric:
-      | 'mergeAbortedAfterConflictsCount'
-      | 'rebaseAbortedAfterConflictsCount'
-      | 'mergeSuccessAfterConflictsCount'
-      | 'rebaseSuccessAfterConflictsCount'
-  ) => void
+  increment: (k: keyof NumericMeasures, n?: number) => Promise<void>
 }
 
 const defaultPostImplementation = (body: Record<string, any>) =>
@@ -586,9 +633,13 @@ export class StatsStore implements IStatsStore {
       showDiffCheckMarksKey,
       showDiffCheckMarksDefault
     )
-
     const useExternalCredentialHelper =
       getBoolean(useExternalCredentialHelperKey) ?? null
+
+    const filteringChangesEnabled = getBoolean(
+      showChangesFilterKey,
+      showChangesFilterDefault
+    )
 
     // isInApplicationsFolder is undefined when not running on Darwin
     const launchedFromApplicationsFolder = __DARWIN__
@@ -617,7 +668,40 @@ export class StatsStore implements IStatsStore {
       linkUnderlinesVisible,
       diffCheckMarksVisible,
       useExternalCredentialHelper,
+      filteringChangesEnabled,
+      gitHooksEnvEnabled: getHooksEnvEnabled(),
+      copilotConflictResolutionModel:
+        this.getSelectedCopilotConflictResolutionModel(),
     }
+  }
+
+  /**
+   * Reads the user's selected Copilot conflict resolution model from
+   * localStorage and resolves it to the actual model ID string.
+   */
+  private getSelectedCopilotConflictResolutionModel(): string {
+    try {
+      const raw = localStorage.getItem('selected-copilot-models-by-account')
+      if (raw !== null) {
+        const parsed: unknown = JSON.parse(raw)
+        if (typeof parsed === 'object' && parsed !== null) {
+          for (const selections of Object.values(parsed)) {
+            if (typeof selections === 'object' && selections !== null) {
+              const selection = (selections as Record<string, unknown>)[
+                'conflict-resolution'
+              ]
+              if (typeof selection === 'string' && selection.length > 0) {
+                const key = parseModelKey(selection)
+                return key.modelId || DefaultCopilotModel
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to default
+    }
+    return DefaultCopilotModel
   }
 
   private getOnboardingStats(): IOnboardingStats {
@@ -663,16 +747,10 @@ export class StatsStore implements IStatsStore {
 
   /** Determines if an account is a dotCom and/or enterprise user */
   private determineUserType(accounts: ReadonlyArray<Account>) {
-    const dotComAccount = !!accounts.find(
-      a => a.endpoint === getDotComAPIEndpoint()
-    )
-    const enterpriseAccount = !!accounts.find(
-      a => a.endpoint !== getDotComAPIEndpoint()
-    )
-
     return {
-      dotComAccount,
-      enterpriseAccount,
+      dotComAccount: accounts.some(isDotComAccount),
+      enterpriseAccount: accounts.some(isEnterpriseAccount),
+      enterpriseAccountCount: accounts.filter(isEnterpriseAccount).length,
     }
   }
 
@@ -808,13 +886,10 @@ export class StatsStore implements IStatsStore {
     return this.optOut
   }
 
-  public async recordPush(
-    githubAccount: Account | null,
-    options?: PushOptions
-  ) {
-    if (githubAccount === null) {
+  public async recordPush(account: Account | null, options?: PushOptions) {
+    if (account === null) {
       await this.recordPushToGenericRemote(options)
-    } else if (githubAccount.endpoint === getDotComAPIEndpoint()) {
+    } else if (isDotComAccount(account)) {
       await this.recordPushToGitHub(options)
     } else {
       await this.recordPushToGitHubEnterprise(options)
@@ -988,9 +1063,6 @@ export class StatsStore implements IStatsStore {
     }
   }
 
-  public recordTagCreated = (numCreatedTags: number) =>
-    this.increment('tagsCreated', numCreatedTags)
-
   private recordSquashUndone = () => this.increment('squashUndoneCount')
 
   public async recordOperationConflictsEncounteredCount(
@@ -1124,6 +1196,13 @@ export class StatsStore implements IStatsStore {
       reviewType,
       'DialogSwitchToPullRequestCount'
     )
+  }
+
+  /** Mark the maximum number of worktrees observed in a repository */
+  public recordWorktreeCount(count: number): Promise<void> {
+    return this.updateDailyMeasures(m => ({
+      worktreeMaxCount: Math.max(m.worktreeMaxCount, count),
+    }))
   }
 
   public increment = (k: keyof NumericMeasures, n = 1) =>

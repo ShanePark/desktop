@@ -3,6 +3,8 @@ import * as Path from 'path'
 import { clamp } from '../../lib/clamp'
 import { Tooltip } from './tooltip'
 import { createObservableRef } from './observable-ref'
+import { IMatches } from '../../lib/fuzzy-find'
+import { HighlightText } from './highlight-text'
 
 interface IPathTextProps {
   /**
@@ -17,6 +19,9 @@ interface IPathTextProps {
    * though never updated after the initial measurement.
    */
   readonly availableWidth?: number
+
+  /** The characters in the file path to highlight */
+  readonly matches?: IMatches
 }
 
 interface IPathDisplayState {
@@ -289,26 +294,63 @@ export class PathText extends React.PureComponent<
   }
 
   public render() {
+    const matchesInDirectoryText = this.props.matches?.title.filter(
+      m => m <= this.state.directoryText.length - 1
+    )
+
+    const matchesNotInDirectoryText = this.props.matches?.title
+      .map(
+        m => m - (this.state.normalizedPath.length - this.state.fileText.length)
+      )
+      .filter(m => m >= 0)
+
+    const directoryElementText = matchesInDirectoryText ? (
+      <HighlightText
+        text={this.state.directoryText}
+        highlight={matchesInDirectoryText}
+      />
+    ) : (
+      this.state.directoryText
+    )
+
     const directoryElement =
       this.state.directoryText && this.state.directoryText.length ? (
-        <span className="dirname">{this.state.directoryText}</span>
+        <span className="dirname">{directoryElementText}</span>
       ) : null
 
     const truncated = this.state.length < this.state.normalizedPath.length
+
+    const fileText = matchesNotInDirectoryText ? (
+      <HighlightText
+        text={this.state.fileText}
+        highlight={matchesNotInDirectoryText}
+      />
+    ) : (
+      this.state.fileText
+    )
+
+    const tooltipText = this.props.matches ? (
+      <HighlightText
+        text={this.state.normalizedPath}
+        highlight={this.props.matches.title}
+      />
+    ) : (
+      this.state.normalizedPath
+    )
 
     return (
       <div className="path-text-component" ref={this.pathElementRef}>
         <span ref={this.onPathInnerElementRef}>
           {directoryElement}
-          <span className="filename">{this.state.fileText}</span>
+          <span className="filename">{fileText}</span>
         </span>
         {truncated && (
           <Tooltip
             target={this.pathElementRef}
             interactive={true}
-            className="selectable"
+            className="selectable path-text"
           >
-            {this.state.normalizedPath}
+            {tooltipText}
           </Tooltip>
         )}
       </div>
@@ -482,14 +524,18 @@ export class PathText extends React.PureComponent<
       // Okay, so it didn't quite fit, let's trim it down a little
       const shortestNonFit = this.state.length
 
-      const maxChars = shortestNonFit - 1
-      const minChars = this.state.longestFit || 0
+      const maxChars = Math.max(shortestNonFit - 1, 0)
+      const minChars = Math.min(this.state.longestFit || 0, maxChars)
 
-      const length = clamp(
+      const ratioLength = clamp(
         Math.floor(this.state.length * ratio),
         minChars,
         maxChars
       )
+      const length =
+        this.state.shortestNonFit === undefined
+          ? ratioLength
+          : Math.floor((minChars + maxChars) / 2)
 
       this.setState({
         ...this.state,

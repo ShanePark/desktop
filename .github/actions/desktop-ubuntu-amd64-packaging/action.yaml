@@ -1,0 +1,7 @@
+name: 'GitHub Desktop for Linux packaging for x64'
+description:
+  'Build and test the Linux application in an Ubuntu 22.04 packaging
+  environment.'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'

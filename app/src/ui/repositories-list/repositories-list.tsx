@@ -1,14 +1,13 @@
 import * as React from 'react'
 import { TooltippedContent } from '../lib/tooltipped-content'
 
-import { RepositoryListItem } from './repository-list-item'
+import { commitGrammar, RepositoryListItem } from './repository-list-item'
 import {
   groupRepositories,
   IRepositoryListItem,
   Repositoryish,
-  RepositoryGroupIdentifier,
-  KnownRepositoryGroup,
-  makeRecentRepositoriesGroup,
+  RepositoryListGroup,
+  getGroupKey,
 } from './group-repositories'
 import { IFilterListGroup } from '../lib/filter-list'
 import { IMatches } from '../../lib/fuzzy-find'
@@ -24,6 +23,7 @@ import { encodePathAsUrl } from '../../lib/path'
 import memoizeOne from 'memoize-one'
 import { KeyboardShortcut } from '../keyboard-shortcut/keyboard-shortcut'
 import { generateRepositoryListContextMenu } from '../repositories-list/repository-list-item-context-menu'
+import { enableWorktreeSupport } from '../../lib/feature-flag'
 import { SectionFilterList } from '../lib/section-filter-list'
 import { RepositoryActivityToolbar } from './repository-activity-toolbar'
 import { readRepositoryActivity } from '../../lib/git/repository-activity'
@@ -49,6 +49,7 @@ import {
   moveRepositoryGroup,
   moveRepository,
   toggleRepositoryGroup,
+  repositoryOrganizationPath,
   WorkingGroup,
   RepositoryGroupsChangedEvent,
   Ungrouped,
@@ -58,10 +59,19 @@ import {
   findRepositoryDropSlot,
   IRepositoryDropSlot,
 } from '../../lib/repository-activity/drag'
+import { assertNever } from '../../lib/fatal-error'
+import { IAheadBehind } from '../../models/branch'
 
 const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 
-const recentRepositoriesThreshold = 7
+type RepositoryGroupIdentifier = RepositoryListGroup | string
+
+function repositoryOrganizationKey(repository: Repositoryish): string {
+  return repositoryOrganizationPath(
+    repository.path,
+    repository instanceof Repository ? repository.mainWorktreePath : undefined
+  )
+}
 
 interface IRepositoriesListProps {
   readonly selectedRepository: Repositoryish | null
@@ -129,7 +139,9 @@ const RowHeight = 29
  * the id of the provided repository.
  */
 function findMatchingListItem(
-  groups: ReadonlyArray<IFilterListGroup<IRepositoryListItem>>,
+  groups: ReadonlyArray<
+    IFilterListGroup<IRepositoryListItem, RepositoryGroupIdentifier>
+  >,
   selectedRepository: Repositoryish | null
 ) {
   if (selectedRepository !== null) {
@@ -169,11 +181,16 @@ export class RepositoriesList extends React.Component<
   private getRepositoryGroups = memoizeOne(
     (
       repositories: ReadonlyArray<Repositoryish> | null,
-      localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
+      localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>,
+      recentRepositories: ReadonlyArray<number>
     ) =>
       repositories === null
         ? []
-        : groupRepositories(repositories, localRepositoryStateLookup)
+        : groupRepositories(
+            repositories,
+            localRepositoryStateLookup,
+            recentRepositories
+          )
   )
 
   /**
@@ -325,7 +342,7 @@ export class RepositoriesList extends React.Component<
           item.workingGroupName !== undefined
             ? WorkingGroup
             : this.state.organization.assignments[
-                activityKey(repository.path)
+                repositoryOrganizationKey(repository)
               ] ?? Ungrouped
         }
         onDragOver={this.onRepositoryDragOver}
@@ -360,40 +377,148 @@ export class RepositoriesList extends React.Component<
     )
   }
 
+  private getAheadBehindTooltip = (aheadBehind: IAheadBehind | null) => {
+    if (aheadBehind === null) {
+      return null
+    }
+
+    const { ahead, behind } = aheadBehind
+
+    if (behind === 0 && ahead === 0) {
+      return null
+    }
+
+    return (
+      'The currently checked out branch is' +
+      (behind ? ` ${commitGrammar(behind)} behind ` : '') +
+      (behind && ahead ? 'and' : '') +
+      (ahead ? ` ${commitGrammar(ahead)} ahead of ` : '') +
+      'its tracked branch.'
+    )
+  }
+
+  private renderRowFocusTooltip = (
+    item: IRepositoryListItem
+  ): JSX.Element | string | null => {
+    const { repository, aheadBehind, changedFilesCount } = item
+    const gitHubRepo =
+      repository instanceof Repository ? repository.gitHubRepository : null
+    const alias = repository instanceof Repository ? repository.alias : null
+    const realName = gitHubRepo ? gitHubRepo.fullName : repository.name
+    const aheadBehindTooltip = this.getAheadBehindTooltip(aheadBehind)
+    const hasChanges = changedFilesCount > 0
+    const uncommittedChangesTooltip = hasChanges
+      ? `There are uncommitted changes in this repository.`
+      : null
+
+    const ahead = aheadBehind?.ahead ?? 0
+    const behind = aheadBehind?.behind ?? 0
+
+    return (
+      <div className="repository-list-item-tooltip list-item-tooltip">
+        <div>
+          <div className="label">Full Name: </div>
+          {realName}
+          {alias && <> ({alias})</>}
+        </div>
+        <div>
+          <div className="label">Path: </div>
+          {repository.path}
+        </div>
+        {aheadBehindTooltip && (
+          <div>
+            <div className="label">
+              <div className="ahead-behind">
+                {ahead > 0 && <Octicon symbol={octicons.arrowUp} />}
+                {behind > 0 && <Octicon symbol={octicons.arrowDown} />}
+              </div>
+            </div>
+            {aheadBehindTooltip}
+          </div>
+        )}
+        {uncommittedChangesTooltip && (
+          <div>
+            <div className="label">
+              <span className="change-indicator-wrapper">
+                <Octicon symbol={octicons.dotFill} />
+              </span>
+            </div>
+            {uncommittedChangesTooltip}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   private getGroupLabel(identifier: RepositoryGroupIdentifier) {
-    if (identifier === WorkingGroup) {
-      return 'Working'
-    }
-    if (identifier === Ungrouped) {
-      return 'Ungrouped'
-    }
-    const custom = this.state.organization.groups.find(g => g.id === identifier)
-    if (custom) {
-      return custom.name
-    }
-    if (identifier === '_LocalActivity_') {
-      return 'Local working copies'
-    } else if (identifier === KnownRepositoryGroup.Enterprise) {
-      return 'Enterprise'
-    } else if (identifier === KnownRepositoryGroup.NonGitHub) {
-      return 'Other'
-    } else {
+    if (typeof identifier === 'string') {
+      if (identifier === WorkingGroup) {
+        return 'Working'
+      }
+      if (identifier === Ungrouped) {
+        return 'Ungrouped'
+      }
+      const custom = this.state.organization.groups.find(
+        group => group.id === identifier
+      )
+      if (custom) {
+        return custom.name
+      }
+      if (identifier === '_LocalActivity_') {
+        return 'Local working copies'
+      }
       return identifier
+    }
+
+    const { kind } = identifier
+    if (kind === 'enterprise') {
+      return identifier.host
+    } else if (kind === 'other') {
+      return 'Other'
+    } else if (kind === 'dotcom') {
+      return identifier.owner.login
+    } else if (kind === 'recent') {
+      return 'Recent'
+    } else {
+      return assertNever(kind, `Unknown repository group kind ${kind}`)
     }
   }
 
-  private renderGroupHeader = (id: string) => {
-    const identifier = id as RepositoryGroupIdentifier
+  private getGroupIdentifierKey = (identifier: RepositoryGroupIdentifier) =>
+    typeof identifier === 'string' ? identifier : getGroupKey(identifier)
+
+  private renderGroupHeader = (identifier: RepositoryGroupIdentifier) => {
+    const id = this.getGroupIdentifierKey(identifier)
     const label = this.getGroupLabel(identifier)
+
+    if (typeof identifier !== 'string') {
+      return (
+        <TooltippedContent
+          key={id}
+          className="filter-list-group-header"
+          tooltip={label}
+          onlyWhenOverflowed={true}
+          tagName="div"
+        >
+          {label}
+        </TooltippedContent>
+      )
+    }
 
     const searching = this.props.filterText.length > 0
     const collapsed =
       !searching && (this.state.organization.collapsed ?? []).includes(id)
+    const isCustomGroup = this.state.organization.groups.some(
+      group => group.id === id
+    )
     const canDrop = id !== WorkingGroup
+
     return (
       <div
         key={id}
-        className={`filter-list-group-header repository-custom-group ${
+        className={`filter-list-group-header${
+          isCustomGroup ? ' repository-custom-group' : ''
+        } ${
           this.state.dropGroup === id
             ? this.state.dropPosition
               ? `group-insert-${this.state.dropPosition}`
@@ -407,36 +532,43 @@ export class RepositoriesList extends React.Component<
             : 'Uncommitted changes or unpushed commits on the current branch'
         }
         data-group={id}
-        draggable={this.state.organization.groups.some(g => g.id === id)}
+        draggable={isCustomGroup}
         onDragStart={this.onGroupReorderStart}
         onDragEnd={this.onRepositoryDragEnd}
         onDragOver={this.onGroupDragOver}
         onDragLeave={this.onGroupDragLeave}
         onDrop={this.onGroupDrop}
       >
-        <button
-          type="button"
-          className="repository-group-toggle"
-          data-group={id}
-          aria-expanded={!collapsed}
-          aria-disabled={searching}
-          aria-label={
-            searching
-              ? `${label}, expanded while searching`
-              : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
-          }
-          onClick={this.onGroupToggle}
-          onKeyDown={this.onGroupReorderKeyDown}
+        <TooltippedContent
+          className="repository-group-header-tooltip"
+          tooltip={label}
+          onlyWhenOverflowed={true}
+          tagName="div"
         >
-          <Octicon
-            symbol={collapsed ? octicons.chevronRight : octicons.chevronDown}
-          />
-          <span className="repository-group-label">{label}</span>
-          <span className="repository-group-count">
-            {this.groupCounts.get(id) ?? 0}
-          </span>
-        </button>
-        {this.state.organization.groups.some(g => g.id === id) && (
+          <button
+            type="button"
+            className="repository-group-toggle"
+            data-group={id}
+            aria-expanded={!collapsed}
+            aria-disabled={searching}
+            aria-label={
+              searching
+                ? `${label}, expanded while searching`
+                : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
+            }
+            onClick={this.onGroupToggle}
+            onKeyDown={this.onGroupReorderKeyDown}
+          >
+            <Octicon
+              symbol={collapsed ? octicons.chevronRight : octicons.chevronDown}
+            />
+            <span className="repository-group-label">{label}</span>
+            <span className="repository-group-count">
+              {this.groupCounts.get(id) ?? 0}
+            </span>
+          </button>
+        </TooltippedContent>
+        {isCustomGroup && (
           <button
             type="button"
             className="repository-group-menu"
@@ -506,20 +638,21 @@ export class RepositoriesList extends React.Component<
     if (source && target && event.currentTarget.dataset.working !== 'true') {
       const rect = event.currentTarget.getBoundingClientRect()
       const group =
-        this.state.organization.assignments[activityKey(target.path)] ??
-        Ungrouped
+        this.state.organization.assignments[
+          repositoryOrganizationKey(target)
+        ] ?? Ungrouped
       const fallback = [...this.props.repositories]
         .sort(
           (a, b) =>
             a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
             a.path.localeCompare(b.path)
         )
-        .map(r => r.path)
+        .map(repositoryOrganizationKey)
       this.updateOrganization(
         moveRepository(
           this.state.organization,
-          source.path,
-          target.path,
+          repositoryOrganizationKey(source),
+          repositoryOrganizationKey(target),
           group,
           event.clientY < rect.top + rect.height / 2 ? 'before' : 'after',
           fallback
@@ -591,7 +724,7 @@ export class RepositoriesList extends React.Component<
         )
       )
     } else if (id && id !== WorkingGroup && repository) {
-      this.assignGroup(repository.path, id)
+      this.assignGroup(repositoryOrganizationKey(repository), id)
     }
     this.onRepositoryDragEnd()
   }
@@ -839,19 +972,19 @@ export class RepositoriesList extends React.Component<
                 sensitivity: 'base',
               }) || a.path.localeCompare(b.path)
           )
-          .map(r => r.path)
+          .map(repositoryOrganizationKey)
         this.updateOrganization(
           moveRepository(
             this.state.organization,
-            source.path,
-            target.path,
+            repositoryOrganizationKey(source),
+            repositoryOrganizationKey(target),
             slot.group,
             slot.position,
             fallback
           )
         )
       } else if (source) {
-        this.assignGroup(source.path, slot.group)
+        this.assignGroup(repositoryOrganizationKey(source), slot.group)
       }
     }
     this.onRepositoryDragEnd()
@@ -920,6 +1053,12 @@ export class RepositoriesList extends React.Component<
       onChangeRepositoryAlias: this.onChangeRepositoryAlias,
       onRemoveRepositoryAlias: this.onRemoveRepositoryAlias,
       onViewOnGitHub: this.props.onViewOnGitHub,
+      onCreateWorktree: enableWorktreeSupport()
+        ? this.onCreateWorktree
+        : undefined,
+      onShowWorktrees: enableWorktreeSupport()
+        ? this.onShowWorktrees
+        : undefined,
       repository: item.repository,
       shellLabel: this.props.shellLabel,
     })
@@ -930,11 +1069,19 @@ export class RepositoriesList extends React.Component<
         submenu: [
           ...this.state.organization.groups.map(g => ({
             label: g.name,
-            action: () => this.assignGroup(item.repository.path, g.id),
+            action: () =>
+              this.assignGroup(
+                repositoryOrganizationKey(item.repository),
+                g.id
+              ),
           })),
           {
             label: 'Ungrouped',
-            action: () => this.assignGroup(item.repository.path, Ungrouped),
+            action: () =>
+              this.assignGroup(
+                repositoryOrganizationKey(item.repository),
+                Ungrouped
+              ),
           },
         ],
       },
@@ -948,29 +1095,25 @@ export class RepositoriesList extends React.Component<
       item.workingGroupName ? `, group ${item.workingGroupName}` : ''
     }, ${this.getActivityDescription(item)}`
   private getGroupAriaLabelGetter =
-    (groups: ReadonlyArray<IFilterListGroup<IRepositoryListItem>>) =>
+    (
+      groups: ReadonlyArray<
+        IFilterListGroup<IRepositoryListItem, RepositoryGroupIdentifier>
+      >
+    ) =>
     (group: number) =>
       this.getGroupLabel(groups[group].identifier)
 
   public render() {
-    const baseGroups = this.getRepositoryGroups(
+    const originalGroups = this.getRepositoryGroups(
       this.props.repositories,
-      this.props.localRepositoryStateLookup
+      this.props.localRepositoryStateLookup,
+      this.props.recentRepositories
     )
 
-    const originalGroups =
-      this.props.repositories.length > recentRepositoriesThreshold
-        ? [
-            makeRecentRepositoriesGroup(
-              this.props.recentRepositories,
-              this.props.repositories,
-              this.props.localRepositoryStateLookup
-            ),
-            ...baseGroups,
-          ]
-        : baseGroups
-
-    const groups = projectActivityGroups(
+    const groups = projectActivityGroups<
+      IRepositoryListItem,
+      RepositoryGroupIdentifier
+    >(
       originalGroups,
       this.state.activity.repositories,
       this.state.activityPreferences,
@@ -978,7 +1121,10 @@ export class RepositoriesList extends React.Component<
       this.state.organization
     )
     this.groupCounts = new Map(
-      groups.map(group => [group.identifier, group.items.length])
+      groups.map(group => [
+        this.getGroupIdentifierKey(group.identifier),
+        group.items.length,
+      ])
     )
     const selectedItem =
       groups
@@ -993,7 +1139,7 @@ export class RepositoriesList extends React.Component<
         onDropCapture={this.onListDrop}
         onDragLeave={this.onListDragLeave}
       >
-        <SectionFilterList<IRepositoryListItem>
+        <SectionFilterList<IRepositoryListItem, RepositoryGroupIdentifier>
           renderPreList={this.renderGroupError}
           showEmptyGroups={!this.state.activityPreferences.onlyUncommitted}
           collapsedGroupIds={new Set(this.state.organization.collapsed ?? [])}
@@ -1002,6 +1148,7 @@ export class RepositoriesList extends React.Component<
           filterText={this.props.filterText}
           onFilterTextChanged={this.props.onFilterTextChanged}
           renderItem={this.renderItem}
+          renderRowFocusTooltip={this.renderRowFocusTooltip}
           renderGroupHeader={this.renderGroupHeader}
           onItemClick={this.onItemClick}
           onSelectionChanged={this.onListSelectionChanged}
@@ -1041,12 +1188,21 @@ export class RepositoriesList extends React.Component<
           className="new-repository-button"
           onClick={this.onNewRepositoryButtonClick}
           ariaExpanded={this.state.newRepositoryMenuExpanded}
+          onKeyDown={this.onNewRepositoryButtonKeyDown}
         >
           Add
           <Octicon symbol={octicons.triangleDown} />
         </Button>
       </React.Fragment>
     )
+  }
+
+  private onNewRepositoryButtonKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ) => {
+    if (event.key === 'ArrowDown') {
+      this.onNewRepositoryButtonClick()
+    }
   }
 
   private renderNoItems = () => {
@@ -1127,5 +1283,17 @@ export class RepositoriesList extends React.Component<
 
   private onRemoveRepositoryAlias = (repository: Repository) => {
     this.props.dispatcher.changeRepositoryAlias(repository, null)
+  }
+
+  private onCreateWorktree = (repository: Repository) => {
+    this.props.dispatcher.showPopup({
+      type: PopupType.AddWorktree,
+      repository,
+    })
+  }
+
+  private onShowWorktrees = (repository: Repository) => {
+    this.props.dispatcher.selectRepository(repository)
+    this.props.dispatcher.showWorktreesFoldout()
   }
 }

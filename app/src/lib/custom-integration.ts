@@ -1,11 +1,19 @@
-import { ChildProcess, SpawnOptions, spawn } from 'child_process'
+import { parseCommandLineArgv } from 'windows-argv-parser'
 import stringArgv from 'string-argv'
 import { promisify } from 'util'
-import { exec } from 'child_process'
+import { execFile, spawn, SpawnOptions } from 'child_process'
 import { access, lstat } from 'fs/promises'
 import * as fs from 'fs'
+import { extname } from 'path'
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+
+/**
+ * File extensions that can be invoked directly by `spawn` on Windows. Other
+ * common Windows launcher types (e.g. `.bat`, `.cmd`, `.ps1`) require a shell
+ * to execute and are intentionally excluded.
+ */
+export const WindowsExecutableExtensions: ReadonlyArray<string> = ['exe', 'com']
 
 /** The string that will be replaced by the target path in the custom integration arguments */
 export const TargetPathArgument = '%TARGET_PATH%'
@@ -28,7 +36,7 @@ export interface ICustomIntegration {
 export function parseCustomIntegrationArguments(
   args: string
 ): ReadonlyArray<string> {
-  return stringArgv(args)
+  return __WIN32__ ? parseCommandLineArgv(args) : stringArgv(args)
 }
 
 // Function to retrieve, on macOS, the bundleId of an app given its path
@@ -42,9 +50,12 @@ async function getAppBundleID(path: string) {
     }
 
     // Use mdls to query the kMDItemCFBundleIdentifier attribute
-    const { stdout } = await execAsync(
-      `mdls -name kMDItemCFBundleIdentifier -raw "${path}"`
-    )
+    const { stdout } = await execFileAsync('mdls', [
+      '-name',
+      'kMDItemCFBundleIdentifier',
+      '-raw',
+      path,
+    ])
     const bundleId = stdout.trim()
 
     // Check for valid output
@@ -70,7 +81,19 @@ export function expandTargetPathArgument(
   args: ReadonlyArray<string>,
   repoPath: string
 ): ReadonlyArray<string> {
-  return args.map(arg => arg.replaceAll(TargetPathArgument, repoPath))
+  // Only strip quotes when the entire argument is the quoted placeholder.
+  // Otherwise preserve any user-provided quoting and replace the placeholder
+  // in place.
+  return args.map(arg => {
+    if (
+      arg === `'${TargetPathArgument}'` ||
+      arg === `"${TargetPathArgument}"`
+    ) {
+      return repoPath
+    }
+
+    return arg.replaceAll(TargetPathArgument, repoPath)
+  })
 }
 
 /**
@@ -105,8 +128,19 @@ export async function validateCustomIntegrationPath(
       .then(() => true)
       .catch(() => false)
 
+    // On Windows, `X_OK` is equivalent to `F_OK` so we additionally restrict
+    // to extensions that `spawn` can launch directly. Wrappers like `.bat`
+    // or `.cmd` require a shell and would silently fail at launch time.
+    const hasLaunchableExtension =
+      !__WIN32__ ||
+      WindowsExecutableExtensions.includes(
+        extname(path).replace(/^\./, '').toLowerCase()
+      )
+
     const isExecutableFile =
-      (pathStat.isFile() || pathStat.isSymbolicLink()) && canBeExecuted
+      (pathStat.isFile() || pathStat.isSymbolicLink()) &&
+      canBeExecuted &&
+      hasLaunchableExtension
 
     // On macOS, not only executable files are valid, but also apps (which are
     // directories with a `.app` extension and from which we can retrieve
@@ -117,7 +151,9 @@ export async function validateCustomIntegrationPath(
 
     return { isValid: isExecutableFile || !!bundleID, bundleID }
   } catch (e) {
-    log.error(`Failed to validate path: ${path}`, e)
+    if (e.code !== 'ENOENT') {
+      log.error(`Failed to validate path: ${path}`, e)
+    }
     return { isValid: false }
   }
 }
@@ -182,22 +218,13 @@ export function migratedCustomIntegration(
  * on Windows, where we need to wrap the command and arguments in quotes when
  * the shell option is enabled.
  *
- * @param command Command to spawn
+ * @param cmd Command to spawn
  * @param args Arguments to pass to the command
  * @param options Options to pass to spawn (optional)
  * @returns The ChildProcess object returned by spawn
  */
-export function spawnCustomIntegration(
-  command: string,
+export const spawnCustomIntegration = (
+  cmd: string,
   args: readonly string[],
-  options?: SpawnOptions
-): ChildProcess {
-  // On Windows, we need to wrap the arguments and the command in quotes,
-  // otherwise the shell will split them by spaces again after invoking spawn.
-  if (__WIN32__ && options?.shell) {
-    command = `"${command}"`
-    args = args.map(a => `"${a}"`)
-  }
-
-  return options ? spawn(command, args, options) : spawn(command, args)
-}
+  opts?: SpawnOptions
+) => spawn(cmd, args, { stdio: 'ignore', detached: true, ...opts })

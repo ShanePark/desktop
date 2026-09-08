@@ -2,6 +2,9 @@
 /** Is the app running in dev mode? */
 declare const __DEV__: boolean
 
+/** Is the app using dev secrets? */
+declare const __DEV_SECRETS__: boolean
+
 /** The OAuth client id the app should use */
 declare const __OAUTH_CLIENT_ID__: string | undefined
 
@@ -44,10 +47,14 @@ declare const __RELEASE_CHANNEL__:
   | 'test'
   | 'development'
 
-declare const __CLI_COMMANDS__: ReadonlyArray<string>
-
 /** The URL for Squirrel's updates. */
 declare const __UPDATES_URL__: string
+
+/** The URL for fatal exception reports. */
+declare const __ERROR_REPORTING_ENDPOINT__: string | undefined
+
+/** The URL for non-fatal exception reports. */
+declare const __NON_FATAL_ERROR_REPORTING_ENDPOINT__: string | undefined
 
 /**
  * The currently executing process kind, this is specific to desktop

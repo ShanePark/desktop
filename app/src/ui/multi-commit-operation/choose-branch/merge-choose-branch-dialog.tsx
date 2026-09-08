@@ -13,6 +13,7 @@ import {
   canStartOperation,
 } from './base-choose-branch-dialog'
 import { truncateWithEllipsis } from '../../../lib/truncate-with-ellipsis'
+import { formatNumber } from '../../../lib/format-number'
 
 interface IMergeChooseBranchDialogState {
   readonly commitCount: number
@@ -182,8 +183,9 @@ export class MergeChooseBranchDialog extends React.Component<
     if (commitCount === 0) {
       return (
         <React.Fragment>
-          {`This branch is up to date with `}
-          <strong>{branch.name}</strong>
+          <strong>{currentBranch.name}</strong>
+          {` `}
+          is already up to date with <strong>{branch.name}</strong>
         </React.Fragment>
       )
     }
@@ -192,7 +194,7 @@ export class MergeChooseBranchDialog extends React.Component<
     return (
       <React.Fragment>
         This will merge
-        <strong>{` ${commitCount} ${pluralized}`}</strong>
+        <strong>{` ${formatNumber(commitCount)} ${pluralized}`}</strong>
         {` from `}
         <strong>{branch.name}</strong>
         {` into `}
@@ -218,7 +220,7 @@ export class MergeChooseBranchDialog extends React.Component<
     return (
       <React.Fragment>
         There will be
-        <strong>{` ${count} conflicted ${pluralized}`}</strong>
+        <strong>{` ${formatNumber(count)} conflicted ${pluralized}`}</strong>
         {` when merging `}
         <strong>{branch.name}</strong>
         {` into `}

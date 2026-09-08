@@ -7,6 +7,9 @@ You will need to install these tools on your machine:
  - Python 3
  - Electron dependencies
 
+Linux builds support x64 and arm64. 32-bit Linux targets, including armv7l,
+armhf, and ia32, are not supported.
+
 ## Node.js
 
 The NodeJS project has instructions for installing across a variety of

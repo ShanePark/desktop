@@ -4,7 +4,7 @@ import { DialogHeader } from './header'
 import { createUniqueId, releaseUniqueId } from '../lib/id-pool'
 import { getTitleBarHeight } from '../window/title-bar'
 import { isTopMostDialog } from './is-top-most'
-import { isMacOSSonoma, isMacOSVentura } from '../../lib/get-os'
+import { isMacOSSonomaOrLater, isMacOSVentura } from '../../lib/get-os'
 import { sendDialogDidOpen } from '../main-process-proxy'
 
 /**
@@ -265,6 +265,14 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
   private dialogElement: HTMLDialogElement | null = null
   private dismissGraceTimeoutId?: number
 
+  /**
+   * The element within this dialog that last had keyboard focus while the
+   * dialog was the top-most one. Used to restore focus to the element that
+   * triggered a nested dialog once that nested dialog is dismissed (rather than
+   * moving focus back to the first suitable child).
+   */
+  private lastFocusedElement: HTMLElement | null = null
+
   private disableClickDismissalTimeoutId: number | null = null
   private disableClickDismissal = false
 
@@ -395,6 +403,8 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
       this.dialogElement.showModal()
     }
 
+    this.dialogElement.addEventListener('focusin', this.onDialogFocusIn)
+
     // Provide an event that components can subscribe to in order to perform
     // tasks such as re-layout after the dialog is visible
     this.dialogElement.dispatchEvent(
@@ -407,7 +417,26 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
     this.setState({ isAppearing: true })
     this.scheduleDismissGraceTimeout()
 
-    this.focusFirstSuitableChild()
+    // If we're regaining top-most status after a nested dialog was dismissed,
+    // restore focus to the element that previously had it (typically the
+    // control that opened the nested dialog) rather than moving focus back to
+    // the first suitable child.
+    if (
+      this.lastFocusedElement !== null &&
+      this.dialogElement.contains(this.lastFocusedElement)
+    ) {
+      this.lastFocusedElement.focus()
+
+      // If focusing the last focused element didn't work (it may have been
+      // disabled or removed from the DOM) then we should move focus to the
+      // first suitable child.
+      if (document.activeElement !== this.lastFocusedElement) {
+        this.lastFocusedElement = null
+        this.focusFirstSuitableChild()
+      }
+    } else {
+      this.focusFirstSuitableChild()
+    }
 
     window.addEventListener('focus', this.onWindowFocus)
 
@@ -416,6 +445,8 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
   }
 
   protected onDialogIsNotTopMost() {
+    this.dialogElement?.removeEventListener('focusin', this.onDialogFocusIn)
+
     if (this.dialogElement !== null && this.dialogElement.open) {
       this.dialogElement?.close()
     }
@@ -427,6 +458,20 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
 
     this.resizeObserver.disconnect()
     window.removeEventListener('resize', this.scheduleResizeEvent)
+  }
+
+  /**
+   * Keeps track of the element within this dialog that most recently had
+   * keyboard focus. See `lastFocusedElement` for how this is used.
+   */
+  private onDialogFocusIn = (e: FocusEvent) => {
+    if (
+      e.target instanceof HTMLElement &&
+      e.target !== this.dialogElement &&
+      this.dialogElement?.contains(e.target)
+    ) {
+      this.lastFocusedElement = e.target
+    }
   }
 
   /**
@@ -657,16 +702,17 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
       return
     }
 
-    // Ignore the first click right after the window's been focused. It could
-    // be the click that focused the window, in which case we don't wanna
-    // dismiss the dialog.
-    if (this.disableClickDismissal) {
-      this.disableClickDismissal = false
-      this.clearClickDismissalTimer()
-      return
-    }
-
     if (!this.mouseEventIsInsideDialog(e)) {
+      // Ignore the first backdrop click right after the window's been focused.
+      // It could be the click that focused the window, in which case we don't
+      // want to dismiss the dialog. Only ignore backdrop clicks, not clicks on
+      // interactive elements like buttons.
+      if (this.disableClickDismissal) {
+        this.disableClickDismissal = false
+        this.clearClickDismissalTimer()
+        return
+      }
+
       // The user has pressed down on their pointer device outside of the
       // dialog (i.e. on the backdrop). Now we subscribe to the global
       // mouse up event where we can make sure that they release the pointer
@@ -741,6 +787,35 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
     const shortcutKey = __DARWIN__ ? event.metaKey : event.ctrlKey
     if ((shortcutKey && event.key === 'w') || event.key === 'Escape') {
       this.onDialogCancel(event)
+    }
+
+    // N.B. - The following focus management is not needed to trap focus.
+    // Possibly a Chromium update will fix this. On Windows, chromium appears to
+    // briefly move the focus out of the dialog and then back in when the user
+    // presses Tab (or Shift Tab) to the cycle back to top or bottom of
+    // focusable elements in a dialog. For screen reader users, this results in
+    // the undesired behavior of redundantly announcing the dialog contents
+    // along with the first focusable element on alert dialogs because NVDA is
+    // receiving the signal of "opening the dialog" again.
+    if (event.key === 'Tab' && __WIN32__ && this.props.role === 'alertdialog') {
+      const focusableElements =
+        this.dialogElement?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      if (focusableElements && focusableElements.length > 0) {
+        const isTabForward = !event.shiftKey
+        const compareElement = isTabForward
+          ? focusableElements[focusableElements.length - 1]
+          : focusableElements[0]
+        if (document.activeElement === compareElement) {
+          event.preventDefault()
+          // Move focus back to the first or focusable last element
+          const nextFocusElement = isTabForward
+            ? focusableElements[0]
+            : focusableElements[focusableElements.length - 1]
+          nextFocusElement.focus()
+        }
+      }
     }
   }
 
@@ -826,7 +901,7 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
       }
     }
 
-    if (isMacOSSonoma() && this.props.role !== 'alertdialog') {
+    if (isMacOSSonomaOrLater() && this.props.role !== 'alertdialog') {
       // macOS Sonoma introduced a regression in that: For role of 'dialog', the
       // aria-labelledby is not announced. However, if the dialog has a child
       // with a role of header (aka h* elemeent) it will be announced as long as
@@ -854,6 +929,10 @@ export class Dialog extends React.Component<DialogProps, IDialogState> {
     )
 
     return (
+      /**
+       * This a11y linter is a false-positive as the mousedown and keydown
+       * listeners facilitate expected behaviors around dismissing the dialog.
+       */
       // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
       <dialog
         ref={this.onDialogRef}

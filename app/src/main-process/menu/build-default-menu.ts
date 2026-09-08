@@ -4,6 +4,7 @@ import { MenuEvent } from './menu-event'
 import { truncateWithEllipsis } from '../../lib/truncate-with-ellipsis'
 import { getLogDirectoryPath } from '../../lib/logging/get-log-path'
 import { UNSAFE_openDirectory } from '../shell'
+import { enableWorktreeSupport } from '../../lib/feature-flag'
 import { MenuLabelsEvent } from '../../models/menu-labels'
 import * as ipcWebContents from '../ipc-webcontents'
 import { mkdir } from 'fs/promises'
@@ -35,7 +36,11 @@ export const separator: Electron.MenuItemConstructorOptions = {
   type: 'separator',
 }
 
-export function buildDefaultMenu({
+export function buildDefaultMenu(params: MenuLabelsEvent): Electron.Menu {
+  return Menu.buildFromTemplate(buildDefaultMenuTemplate(params))
+}
+
+export function buildDefaultMenuTemplate({
   selectedExternalEditor,
   selectedShell,
   askForConfirmationOnForcePush,
@@ -45,7 +50,8 @@ export function buildDefaultMenu({
   isForcePushForCurrentRepository = false,
   isStashedChangesVisible = false,
   askForConfirmationWhenStashingAllChanges = true,
-}: MenuLabelsEvent): Electron.Menu {
+  isChangesFilterVisible = true,
+}: MenuLabelsEvent): Electron.MenuItemConstructorOptions[] {
   contributionTargetDefaultBranch = truncateWithEllipsis(
     contributionTargetDefaultBranch,
     25
@@ -197,6 +203,13 @@ export function buildDefaultMenu({
         accelerator: 'CmdOrCtrl+B',
         click: emit('show-branches'),
       },
+      {
+        label: __DARWIN__ ? 'Show Worktrees List' : 'Wor&ktrees list',
+        id: 'show-worktrees-list',
+        accelerator: 'CmdOrCtrl+Alt+W',
+        click: emit('show-worktrees'),
+        visible: enableWorktreeSupport(),
+      },
       separator,
       {
         label: __DARWIN__ ? 'Go to Summary' : 'Go to &Summary',
@@ -211,6 +224,16 @@ export function buildDefaultMenu({
         click: isStashedChangesVisible
           ? emit('hide-stashed-changes')
           : emit('show-stashed-changes'),
+      },
+      {
+        label: __DARWIN__
+          ? `${isChangesFilterVisible ? 'Hide' : 'Show'} Changes Filter`
+          : `${
+              isChangesFilterVisible ? 'Hide' : 'Show'
+            } Toggle Chan&ges Filter`,
+        id: 'toggle-changes-filter',
+        accelerator: 'CmdOrCtrl+L',
+        click: emit('toggle-changes-filter'),
       },
       {
         label: __DARWIN__ ? 'Toggle Full Screen' : 'Toggle &full screen',
@@ -349,6 +372,12 @@ export function buildDefaultMenu({
         accelerator: 'CmdOrCtrl+Shift+A',
         click: emit('open-external-editor'),
       },
+      {
+        label: __DARWIN__ ? 'Open With…' : 'Open &with…',
+        id: 'open-with-external-editor',
+        accelerator: 'CmdOrCtrl+Shift+Alt+A',
+        click: emit('open-with-external-editor'),
+      },
       separator,
       {
         id: 'create-issue-in-repository-on-github',
@@ -359,6 +388,14 @@ export function buildDefaultMenu({
         click: emit('create-issue-in-repository-on-github'),
       },
       separator,
+      {
+        id: 'create-worktree',
+        label: __DARWIN__ ? 'New Worktree…' : 'New work&tree…',
+        click: emit('create-worktree'),
+        accelerator: 'CmdOrCtrl+Shift+W',
+        visible: enableWorktreeSupport(),
+      },
+      ...(enableWorktreeSupport() ? [separator] : []),
       {
         label: __DARWIN__ ? 'Repository Settings…' : 'Repository &settings…',
         id: 'show-repository-settings',
@@ -562,7 +599,7 @@ export function buildDefaultMenu({
 
   ensureItemIds(template)
 
-  return Menu.buildFromTemplate(template)
+  return template
 }
 
 function getPushLabel(

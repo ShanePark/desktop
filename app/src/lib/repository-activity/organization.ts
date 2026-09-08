@@ -13,6 +13,18 @@ export interface IRepositoryOrganization {
   readonly assignments: Readonly<Record<string, string>>
 }
 
+/**
+ * Return the stable path used for repository organization state. A repository
+ * can temporarily expose a linked worktree as its current path, while group
+ * assignments and manual order belong to the main worktree.
+ */
+export function repositoryOrganizationPath(
+  path: string,
+  mainWorktreePath?: string
+): string {
+  return activityKey(mainWorktreePath ?? path)
+}
+
 export function readRepositoryOrganization(
   storage: IActivityStorage
 ): IRepositoryOrganization {

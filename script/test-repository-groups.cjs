@@ -122,6 +122,91 @@ async function main() {
     assert.deepEqual(project('recent')[1].items.map(r => r.id), ['3','1','2'])
     assert.equal(Org.moveRepository(org, '/fixture/gamma', '/fixture/alpha', Org.WorkingGroup, 'after', []), org)
   })
+  await test('linked worktree switches preserve organization while activity follows the current path', () => {
+    const mainPath = path.join(tmp, 'worktree-main')
+    const linkedPath = path.join(tmp, 'worktree-linked')
+    const otherPath = path.join(tmp, 'worktree-other')
+    const row = (id, name, currentPath, mainWorktreePath) => ({
+      id: String(id),
+      repository: {
+        id,
+        name,
+        path: currentPath,
+        ...(mainWorktreePath ? { mainWorktreePath } : {}),
+      },
+      text: [name],
+      changedFilesCount: 0,
+      needsDisambiguation: false,
+    })
+    const main = row(1, 'zeta', mainPath)
+    const linked = row(1, 'zeta', linkedPath, mainPath)
+    const other = row(2, 'alpha', otherPath)
+    const group = 'group-worktree'
+    let organization = {
+      groups: [{ id: group, name: 'Worktree' }],
+      assignments: { [mainPath]: group, [otherPath]: group },
+      repositoryOrder: [mainPath, otherPath],
+    }
+    const clean = {
+      checkedAt: 1,
+      changedFilesCount: 0,
+      unpushedCount: 0,
+      lastChangedAt: null,
+      lastCommitAt: 0,
+    }
+    const dirty = { ...clean, changedFilesCount: 1, lastChangedAt: 2 }
+    const project = (rows, activities) =>
+      projectActivityGroups(
+        [{ identifier: 'all', items: rows }],
+        activities,
+        { sort: 'recent', onlyUncommitted: false },
+        'activity',
+        organization
+      )
+
+    assert.deepEqual(
+      project([main, other], new Map([[mainPath, clean], [otherPath, clean]]))[1].items.map(r => r.id),
+      ['1', '2']
+    )
+
+    const dirtyLinked = project(
+      [linked, other],
+      new Map([[linkedPath, dirty], [otherPath, clean]])
+    )
+    assert.equal(dirtyLinked[0].identifier, Org.WorkingGroup)
+    assert.equal(dirtyLinked[0].items[0].id, '1')
+    assert.equal(dirtyLinked[0].items[0].changedFilesCount, 1)
+    assert.equal(dirtyLinked[0].items[0].workingGroupName, 'Worktree')
+
+    const cleanLinked = project(
+      [linked, other],
+      new Map([[linkedPath, clean], [otherPath, clean]])
+    )
+    assert.deepEqual(cleanLinked[1].items.map(r => r.id), ['1', '2'])
+
+    organization = Org.moveRepository(
+      organization,
+      linked.repository.mainWorktreePath ?? linked.repository.path,
+      otherPath,
+      group,
+      'after',
+      [mainPath, otherPath]
+    )
+    assert.deepEqual(organization.repositoryOrder, [otherPath, mainPath])
+    assert.equal(organization.assignments[mainPath], group)
+
+    const movedLinked = project(
+      [linked, other],
+      new Map([[linkedPath, clean], [otherPath, clean]])
+    )
+    assert.deepEqual(movedLinked[1].items.map(r => r.id), ['2', '1'])
+
+    const movedMain = project(
+      [main, other],
+      new Map([[mainPath, clean], [otherPath, clean]])
+    )
+    assert.deepEqual(movedMain[1].items.map(r => r.id), ['2', '1'])
+  })
   await test('deleted groups unassign repositories; malformed storage is safe', () => {
     const value = { groups: [{ id: 'group-test', name: 'Test' }], assignments: { [repo]: 'group-test' } }
     assert.deepEqual(Org.removeRepositoryGroup(value, 'group-test'), { groups: [], assignments: {} })

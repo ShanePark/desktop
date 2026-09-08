@@ -7,15 +7,12 @@ const globPromise = promisify(glob)
 import { rename } from 'fs-extra'
 
 import { getVersion } from '../app/package-info'
-import { getDistPath, getDistRoot } from './dist-info'
+import { getDistArchitecture, getDistPath, getDistRoot } from './dist-info'
 
 function getArchitecture() {
-  const arch = process.env.npm_config_arch || process.arch
-  switch (arch) {
+  switch (getDistArchitecture()) {
     case 'arm64':
       return 'arm64'
-    case 'arm':
-      return 'armhf'
     default:
       return 'amd64'
   }
@@ -28,7 +25,7 @@ type DebianOptions = {
   // required
   src: string
   dest: string
-  arch: 'amd64' | 'i386' | 'arm64' | 'armhf'
+  arch: 'amd64' | 'arm64'
   // optional
   description?: string
   productDescription?: string

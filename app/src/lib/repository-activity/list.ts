@@ -1,4 +1,8 @@
-import { WorkingGroup, Ungrouped } from './organization'
+import {
+  WorkingGroup,
+  Ungrouped,
+  repositoryOrganizationPath,
+} from './organization'
 import type { IRepositoryOrganization } from './organization'
 import { activityKey } from './status'
 import type { IRepositoryActivity } from './status'
@@ -10,6 +14,7 @@ export interface IActivityRow {
     readonly id: number
     readonly path: string
     readonly name: string
+    readonly mainWorktreePath?: string
   }
   readonly worktree?: { readonly type: string; readonly path: string } | null
   readonly text: ReadonlyArray<string>
@@ -28,6 +33,13 @@ export interface IActivityListGroup<T, G> {
 
 export function activityPath(row: IActivityRow): string {
   return row.worktree?.path ?? row.repository.path
+}
+
+function organizationPath(row: IActivityRow): string {
+  return repositoryOrganizationPath(
+    row.repository.path,
+    row.repository.mainWorktreePath
+  )
 }
 
 export function activityIsUnknown(
@@ -194,7 +206,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     [Ungrouped, []],
   ])
   for (const row of annotated) {
-    const assigned = organization.assignments[activityKey(row.repository.path)]
+    const assigned = organization.assignments[organizationPath(row)]
     const target = working.has(row.repository.id)
       ? WorkingGroup
       : assigned && buckets.has(assigned)
@@ -223,9 +235,8 @@ export function projectActivityGroups<T extends IActivityRow, G>(
         : families(items)
             .sort(
               (a, b) =>
-                (ranks.get(activityKey(a[0].repository.path)) ??
-                  Number.MAX_SAFE_INTEGER) -
-                  (ranks.get(activityKey(b[0].repository.path)) ??
+                (ranks.get(organizationPath(a[0])) ?? Number.MAX_SAFE_INTEGER) -
+                  (ranks.get(organizationPath(b[0])) ??
                     Number.MAX_SAFE_INTEGER) || compareNames(a[0], b[0])
             )
             .flatMap(block => {

@@ -1,6 +1,7 @@
+import { describe, it } from 'node:test'
+import assert from 'node:assert'
 import * as path from 'path'
-import * as FSE from 'fs-extra'
-import * as os from 'os'
+import { mkdir, realpath, writeFile } from 'fs/promises'
 
 import { Repository } from '../../../src/models/repository'
 import { getRepositoryType } from '../../../src/lib/git/rev-parse'
@@ -10,40 +11,43 @@ import {
   setupEmptyRepository,
 } from '../../helpers/repositories'
 import { exec } from 'dugite'
-import { mkdirSync } from '../../helpers/temp'
-import { writeFile } from 'fs-extra'
+import { createTempDirectory } from '../../helpers/temp'
 
 describe('git/rev-parse', () => {
-  let repository: Repository
-
-  beforeEach(async () => {
-    const testRepoPath = await setupFixtureRepository('test-repo')
-    repository = new Repository(testRepoPath, -1, null, false)
-  })
-
   describe('getRepositoryType', () => {
-    it('should return an absolute path when run inside a working directory', async () => {
-      expect(await getRepositoryType(repository.path)).toMatchObject({
-        kind: 'regular',
-        topLevelWorkingDirectory: repository.path,
-      })
+    it('should return an absolute path when run inside a working directory', async t => {
+      const testRepoPath = await setupFixtureRepository(t, 'test-repo')
+      const repository = new Repository(testRepoPath, -1, null, false)
+
+      const result = await getRepositoryType(repository.path)
+      assert.equal(result.kind, 'regular')
+      assert(result.kind === 'regular')
+      assert.equal(result.topLevelWorkingDirectory, repository.path)
+      assert.equal(
+        await realpath(result.gitDir),
+        await realpath(path.join(repository.path, '.git'))
+      )
 
       const subdirPath = path.join(repository.path, 'subdir')
-      await FSE.mkdir(subdirPath)
+      await mkdir(subdirPath)
 
-      expect(await getRepositoryType(subdirPath)).toMatchObject({
-        kind: 'regular',
-        topLevelWorkingDirectory: repository.path,
-      })
+      const subdirResult = await getRepositoryType(subdirPath)
+      assert.equal(subdirResult.kind, 'regular')
+      assert(subdirResult.kind === 'regular')
+      assert.equal(subdirResult.topLevelWorkingDirectory, repository.path)
+      assert.equal(
+        await realpath(subdirResult.gitDir),
+        await realpath(path.join(repository.path, '.git'))
+      )
     })
 
-    it('should return missing when not run inside a working directory', async () => {
-      const result = await getRepositoryType(os.tmpdir())
-      expect(result).toMatchObject({ kind: 'missing' })
+    it('should return missing when not run inside a working directory', async t => {
+      const result = await getRepositoryType(await createTempDirectory(t))
+      assert.deepEqual(result, { kind: 'missing' })
     })
 
-    it('should return correct path for submodules', async () => {
-      const fixturePath = mkdirSync('get-top-level-working-directory-test-')
+    it('should return correct path for submodules', async t => {
+      const fixturePath = await createTempDirectory(t)
 
       const firstRepoPath = path.join(fixturePath, 'repo1')
       const secondRepoPath = path.join(fixturePath, 'repo2')
@@ -68,52 +72,69 @@ describe('git/rev-parse', () => {
         ''
       )
 
-      expect(await getRepositoryType(firstRepoPath)).toMatchObject({
-        kind: 'regular',
-        topLevelWorkingDirectory: firstRepoPath,
-      })
+      const firstResult = await getRepositoryType(firstRepoPath)
+      assert.equal(firstResult.kind, 'regular')
+      assert(firstResult.kind === 'regular')
+      assert.equal(firstResult.topLevelWorkingDirectory, firstRepoPath)
+      assert.equal(
+        await realpath(firstResult.gitDir),
+        await realpath(path.join(firstRepoPath, '.git'))
+      )
 
       const subModulePath = path.join(firstRepoPath, 'repo2')
-      expect(await getRepositoryType(subModulePath)).toMatchObject({
-        kind: 'regular',
-        topLevelWorkingDirectory: subModulePath,
-      })
+      const subResult = await getRepositoryType(subModulePath)
+      assert.equal(subResult.kind, 'regular')
+      assert(subResult.kind === 'regular')
+      assert.equal(subResult.topLevelWorkingDirectory, subModulePath)
+      assert.equal(
+        await realpath(subResult.gitDir),
+        await realpath(path.join(firstRepoPath, '.git', 'modules', 'repo2'))
+      )
     })
 
-    it('returns regular for default initialized repository', async () => {
-      const repository = await setupEmptyRepository()
-      expect(await getRepositoryType(repository.path)).toMatchObject({
-        kind: 'regular',
-        topLevelWorkingDirectory: repository.path,
-      })
+    it('returns regular for default initialized repository', async t => {
+      const repository = await setupEmptyRepository(t)
+      const result = await getRepositoryType(repository.path)
+      assert.equal(result.kind, 'regular')
+      assert(result.kind === 'regular')
+      assert.equal(result.topLevelWorkingDirectory, repository.path)
+      assert.equal(
+        await realpath(result.gitDir),
+        await realpath(path.join(repository.path, '.git'))
+      )
     })
 
-    it('returns bare for initialized bare repository', async () => {
-      const path = mkdirSync('no-repository-here')
+    it('returns bare for initialized bare repository', async t => {
+      const path = await createTempDirectory(t)
       await exec(['init', '--bare'], path)
-      expect(await getRepositoryType(path)).toMatchObject({
+      assert.deepEqual(await getRepositoryType(path), {
         kind: 'bare',
       })
     })
 
-    it('returns missing for empty directory', async () => {
-      const p = mkdirSync('no-actual-repository-here')
-      expect(await getRepositoryType(p)).toMatchObject({
+    it('returns missing for empty directory', async t => {
+      const p = await createTempDirectory(t)
+      assert.deepEqual(await getRepositoryType(p), {
         kind: 'missing',
       })
     })
 
-    it('returns missing for missing directory', async () => {
-      const rootPath = mkdirSync('no-actual-repository-here')
+    it('returns missing for missing directory', async t => {
+      const rootPath = await createTempDirectory(t)
       const missingPath = path.join(rootPath, 'missing-folder')
 
-      expect(await getRepositoryType(missingPath)).toMatchObject({
+      assert.deepEqual(await getRepositoryType(missingPath), {
         kind: 'missing',
       })
     })
 
-    it('returns unsafe for unsafe repository', async () => {
+    it('returns unsafe for unsafe repository', async t => {
+      const testRepoPath = await setupFixtureRepository(t, 'test-repo')
+      const repository = new Repository(testRepoPath, -1, null, false)
+
       const previousHomeValue = process.env['HOME']
+      const previousDifferentOwnerValue =
+        process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER']
 
       // Creating a stub global config so we can unset safe.directory config
       // which will supersede any system config that might set * to ignore
@@ -121,7 +142,7 @@ describe('git/rev-parse', () => {
       //
       // This is because safe.directory setting is ignored if found in local
       // config, environment variables or command line arguments.
-      const testHomeDirectory = mkdirSync('test-home-directory')
+      const testHomeDirectory = await createTempDirectory(t)
       const gitConfigPath = path.join(testHomeDirectory, '.gitconfig')
       await writeFile(
         gitConfigPath,
@@ -132,12 +153,22 @@ directory=`
       process.env['HOME'] = testHomeDirectory
       process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = '1'
 
-      expect(await getRepositoryType(repository.path)).toMatchObject({
-        kind: 'unsafe',
-      })
+      try {
+        assert((await getRepositoryType(repository.path)).kind === 'unsafe')
+      } finally {
+        if (previousDifferentOwnerValue === undefined) {
+          delete process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER']
+        } else {
+          process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] =
+            previousDifferentOwnerValue
+        }
 
-      process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = undefined
-      process.env['HOME'] = previousHomeValue
+        if (previousHomeValue === undefined) {
+          delete process.env['HOME']
+        } else {
+          process.env['HOME'] = previousHomeValue
+        }
+      }
     })
   })
 })

@@ -3,7 +3,7 @@ import { merge } from './merge'
 import { IAppState, SelectionType } from '../lib/app-state'
 import {
   Repository,
-  getGitHubHtmlUrl,
+  getRepositoryHtmlUrl,
   isRepositoryWithGitHubRepository,
 } from '../models/repository'
 import { CloningRepository } from '../models/cloning-repository'
@@ -12,6 +12,7 @@ import { updateMenuState as ipcUpdateMenuState } from '../ui/main-process-proxy'
 import { AppMenu, MenuItem } from '../models/app-menu'
 import { hasConflictedFiles } from './status'
 import { findContributionTargetDefaultBranch } from './branch'
+import { enableWorktreeSupport } from './feature-flag'
 
 export interface IMenuItemState {
   readonly enabled?: boolean
@@ -119,6 +120,7 @@ const allMenuIds: ReadonlyArray<MenuIDs> = [
   'open-in-shell',
   'push',
   'pull',
+  'fetch',
   'branch',
   'repository',
   'go-to-commit-message',
@@ -130,6 +132,7 @@ const allMenuIds: ReadonlyArray<MenuIDs> = [
   'open-working-directory',
   'show-repository-settings',
   'open-external-editor',
+  'open-with-external-editor',
   'remove-repository',
   'new-repository',
   'add-local-repository',
@@ -138,6 +141,9 @@ const allMenuIds: ReadonlyArray<MenuIDs> = [
   'create-pull-request',
   'preview-pull-request',
   'squash-and-merge-branch',
+  'toggle-stashed-changes',
+  'create-worktree',
+  'show-worktrees-list',
 ]
 
 function getAllMenusDisabledBuilder(): MenuStateBuilder {
@@ -164,6 +170,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
   let hasConflicts = false
   let hasPublishedBranch = false
   let networkActionInProgress = false
+  let hasRemote = false
   let tipStateIsUnknown = false
   let branchIsUnborn = false
   let rebaseInProgress = false
@@ -216,6 +223,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     }
 
     networkActionInProgress = selectedState.state.isPushPullFetchInProgress
+    hasRemote = selectedState.state.remote !== null
 
     const { conflictState, workingDirectory } = selectedState.state.changesState
 
@@ -240,8 +248,12 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     'show-changes',
     'show-history',
     'show-branches-list',
+    'show-worktrees-list',
     'open-external-editor',
+    'open-with-external-editor',
     'compare-to-branch',
+    'toggle-changes-filter',
+    'create-worktree',
   ]
 
   const menuStateBuilder = new MenuStateBuilder()
@@ -253,6 +265,11 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
   if (repositoryActive) {
     for (const id of repositoryScopedIDs) {
       menuStateBuilder.enable(id)
+    }
+
+    if (!enableWorktreeSupport()) {
+      menuStateBuilder.disable('show-worktrees-list')
+      menuStateBuilder.disable('create-worktree')
     }
 
     menuStateBuilder.setEnabled(
@@ -287,7 +304,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     menuStateBuilder.setEnabled(
       'view-repository-on-github',
       selectedState?.type === SelectionType.Repository &&
-        getGitHubHtmlUrl(
+        getRepositoryHtmlUrl(
           selectedState.repository,
           selectedState.state.remote
         ) !== null
@@ -313,6 +330,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
       'pull',
       hasPublishedBranch && !networkActionInProgress
     )
+    menuStateBuilder.setEnabled('fetch', hasRemote && !networkActionInProgress)
     menuStateBuilder.setEnabled(
       'create-branch',
       !tipStateIsUnknown && !branchIsUnborn && !rebaseInProgress
@@ -336,6 +354,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
       selectedState.type === SelectionType.MissingRepository
     ) {
       menuStateBuilder.disable('open-external-editor')
+      menuStateBuilder.disable('open-with-external-editor')
     }
   } else {
     for (const id of repositoryScopedIDs) {
@@ -367,6 +386,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
 
     menuStateBuilder.disable('push')
     menuStateBuilder.disable('pull')
+    menuStateBuilder.disable('fetch')
     menuStateBuilder.disable('compare-to-branch')
     menuStateBuilder.disable('compare-on-github')
     menuStateBuilder.disable('branch-on-github')

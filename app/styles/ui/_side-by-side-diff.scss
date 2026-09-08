@@ -43,7 +43,7 @@
       }
 
       &.context .after {
-        border-right: calc(var(--hunk-handle-width) / 2) solid var(--diff-border-color);
+        border-left: calc(var(--hunk-handle-width) / 2) solid var(--diff-border-color);
       }
 
       &.has-check-all-control.context .before {
@@ -418,19 +418,29 @@
 
       .prefix {
         user-select: none;
-      }
-
-      .octicon {
-        height: 8px;
-        fill: var(--error-color);
-        display: inline-block;
-        margin-left: 3px;
-        margin-bottom: -1px;
+        white-space: nowrap;
       }
     }
 
     .popover-component.whitespace-hint {
       width: 275px;
+      &,
+      * {
+        cursor: default;
+      }
+    }
+
+    .no-newline-indicator {
+      font-style: italic;
+      color: var(--diff-alt-text-color);
+      margin-left: 4px;
+
+      .octicon {
+        height: 8px;
+        fill: var(--error-color);
+        display: inline-block;
+        margin-bottom: -1px;
+      }
     }
   }
 

@@ -23,19 +23,9 @@ function getBaseName(path: string): string {
   return baseName
 }
 
-/** Base type for a directory you can run git commands successfully */
-export type WorkingTree = {
-  readonly path: string
-}
-
 /** A local repository. */
 export class Repository {
   public readonly name: string
-  /**
-   * The main working tree (what we commonly
-   * think of as the repository's working directory)
-   */
-  private readonly mainWorkTree: WorkingTree
 
   /**
    * A hash of the properties of the object.
@@ -49,7 +39,7 @@ export class Repository {
    * @param missing Was the repository missing on disk last we checked?
    */
   public constructor(
-    path: string,
+    public readonly path: string,
     public readonly id: number,
     public readonly gitHubRepository: GitHubRepository | null,
     public readonly missing: boolean,
@@ -60,9 +50,25 @@ export class Repository {
      * onboarding flow. Tutorial repositories trigger a tutorial user experience
      * which introduces new users to some core concepts of Git and GitHub.
      */
-    public readonly isTutorialRepository: boolean = false
+    public readonly isTutorialRepository: boolean = false,
+    /**
+     * The path to the .git directory for this repository, or undefined if it
+     * hasn't been resolved yet (e.g. for repositories added before this
+     * property was introduced).
+     */
+    public readonly gitDir: string | undefined = undefined,
+    /**
+     * The path to the main worktree of this repository, recorded when Desktop
+     * switches onto one of its linked worktrees, or undefined if it hasn't been
+     * resolved yet (e.g. for repositories added before this property was
+     * introduced).
+     *
+     * Deleting a linked worktree can take its administrative git metadata with
+     * it, so the worktree set is not always discoverable after the fact. This
+     * records the main worktree while it is still known.
+     */
+    public readonly mainWorktreePath: string | undefined = undefined
   ) {
-    this.mainWorkTree = { path }
     this.name = (gitHubRepository && gitHubRepository.name) || getBaseName(path)
 
     this.hash = createEqualityHash(
@@ -76,15 +82,15 @@ export class Repository {
     )
   }
 
-  public get path(): string {
-    return this.mainWorkTree.path
+  /**
+   * The resolved path to the .git directory for this repository.
+   *
+   * Uses the stored gitDir if available, otherwise falls back to
+   * joining the repository path with '.git'.
+   */
+  public get resolvedGitDir(): string {
+    return this.gitDir ?? Path.join(this.path, '.git')
   }
-}
-
-/** A worktree linked to a main working tree (aka `Repository`) */
-export type LinkedWorkTree = WorkingTree & {
-  /** The sha of the head commit in this work tree */
-  readonly head: string
 }
 
 /** Identical to `Repository`, except it **must** have a `gitHubRepository` */
@@ -164,6 +170,91 @@ export function nameOf(repository: Repository) {
   return gitHubRepository !== null ? gitHubRepository.fullName : repository.name
 }
 
+interface IWebRemote {
+  readonly protocol: 'http' | 'https'
+  readonly hostname: string
+  readonly path: string
+}
+
+function parseWebRemote(url: string): IWebRemote | null {
+  const httpMatch = /^(https?):\/\/(?:[^/@]+(?::[^@]*)?@)?([^/]+)\/(.+)$/.exec(
+    url
+  )
+  if (httpMatch !== null) {
+    return {
+      protocol: httpMatch[1] as 'http' | 'https',
+      hostname: httpMatch[2],
+      path: httpMatch[3],
+    }
+  }
+
+  const scpMatch = /^git@([^:]+):(.+)$/.exec(url)
+  if (scpMatch !== null) {
+    return { protocol: 'https', hostname: scpMatch[1], path: scpMatch[2] }
+  }
+
+  const sshMatch = /^ssh:\/\/git@([^/:]+)(?::\d+)?\/(.+)$/.exec(url)
+  if (sshMatch !== null) {
+    return { protocol: 'https', hostname: sshMatch[1], path: sshMatch[2] }
+  }
+
+  const gitMatch = /^git:([^/]+)\/(.+)$/.exec(url)
+  if (gitMatch !== null) {
+    return { protocol: 'https', hostname: gitMatch[1], path: gitMatch[2] }
+  }
+
+  return null
+}
+
+function normalizeWebRemotePath(path: string): string | null {
+  const pathWithoutQuery = path.split(/[?#]/, 1)[0]
+  const trimmedPath = pathWithoutQuery.replace(/^\/+|\/+$/g, '')
+  if (trimmedPath.length === 0) {
+    return null
+  }
+
+  const components = trimmedPath.split('/')
+  if (
+    components.length < 2 ||
+    components.some(component => component.length === 0)
+  ) {
+    return null
+  }
+
+  const lastComponent = components[components.length - 1]
+  if (lastComponent.endsWith('.git')) {
+    components[components.length - 1] = lastComponent.slice(0, -4)
+  }
+
+  if (components[components.length - 1].length === 0) {
+    return null
+  }
+
+  return components
+    .map(component => {
+      try {
+        return encodeURIComponent(decodeURIComponent(component))
+      } catch {
+        return encodeURIComponent(component)
+      }
+    })
+    .join('/')
+}
+
+function getRemoteHtmlUrl(remote: IRemote | null): string | null {
+  const parsed = remote === null ? null : parseWebRemote(remote.url)
+  if (parsed === null) {
+    return null
+  }
+
+  const path = normalizeWebRemotePath(parsed.path)
+  if (path === null) {
+    return null
+  }
+
+  return `${parsed.protocol}://${parsed.hostname.toLowerCase()}/${path}`
+}
+
 /**
  * Get the GitHub html URL for a repository, if it has one.
  * Will return the parent GitHub repository's URL if it has one.
@@ -188,6 +279,23 @@ export function getGitHubHtmlUrl(
   return `https://github.com/${encodeURIComponent(
     parsed.owner
   )}/${encodeURIComponent(parsed.name)}`
+}
+
+/**
+ * Get the web URL for a repository, if it has one.
+ * Will return the parent GitHub repository's URL if it has one, and otherwise
+ * derives a web URL from the configured remote.
+ */
+export function getRepositoryHtmlUrl(
+  repository: Repository,
+  remote: IRemote | null = null
+): string | null {
+  const githubHtmlUrl = getGitHubHtmlUrl(repository, remote)
+  if (githubHtmlUrl !== null) {
+    return githubHtmlUrl
+  }
+
+  return getRemoteHtmlUrl(remote)
 }
 
 /**

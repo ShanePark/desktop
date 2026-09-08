@@ -7,15 +7,12 @@ const globPromise = promisify(glob)
 import { rename } from 'fs-extra'
 
 import { getVersion } from '../app/package-info'
-import { getDistPath, getDistRoot } from './dist-info'
+import { getDistArchitecture, getDistPath, getDistRoot } from './dist-info'
 
 function getArchitecture() {
-  const arch = process.env.npm_config_arch || process.arch
-  switch (arch) {
+  switch (getDistArchitecture()) {
     case 'arm64':
       return 'aarch64'
-    case 'arm':
-      return 'armv7l'
     default:
       return 'x86_64'
   }

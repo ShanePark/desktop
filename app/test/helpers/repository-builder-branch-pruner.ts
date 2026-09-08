@@ -1,3 +1,4 @@
+import * as Path from 'path'
 import { setupEmptyRepository } from './repositories'
 import { makeCommit, switchTo } from './repository-scaffolding'
 import { exec } from 'dugite'
@@ -9,12 +10,11 @@ import {
 } from '../../src/models/repository'
 import { IAPIFullRepository, getDotComAPIEndpoint } from '../../src/lib/api'
 import { shell } from './test-app-shell'
-import { StatsStore, StatsDatabase } from '../../src/lib/stats'
-import { UiActivityMonitor } from '../../src/ui/lib/ui-activity-monitor'
-import { fakePost } from '../fake-stats-post'
+import { TestStatsStore } from './test-stats-store'
+import { TestContext } from 'node:test'
 
-export async function createRepository() {
-  const repo = await setupEmptyRepository()
+export async function createRepository(t: TestContext) {
+  const repo = await setupEmptyRepository(t)
 
   const firstCommit = {
     entries: [
@@ -69,7 +69,10 @@ export async function setupRepository(
   defaultBranchName: string,
   lastPruneDate?: Date
 ) {
-  let repository = await repositoriesStore.addRepository(path)
+  let repository = await repositoriesStore.addRepository(
+    path,
+    Path.join(path, '.git')
+  )
   if (includesGhRepo) {
     const apiRepo: IAPIFullRepository = {
       clone_url: 'string',
@@ -120,15 +123,7 @@ async function primeCaches(
   repository: Repository,
   repositoriesStateCache: RepositoryStateCache
 ) {
-  const gitStore = new GitStore(
-    repository,
-    shell,
-    new StatsStore(
-      new StatsDatabase('test-StatsDatabase'),
-      new UiActivityMonitor(),
-      fakePost
-    )
-  )
+  const gitStore = new GitStore(repository, shell, new TestStatsStore())
 
   // rather than re-create the branches and stuff as objects, these calls
   // will run the underlying Git operations and update the GitStore state

@@ -13,6 +13,9 @@ interface IPromptsPreferencesProps {
   readonly confirmCheckoutCommit: boolean
   readonly confirmForcePush: boolean
   readonly confirmUndoCommit: boolean
+  readonly askForConfirmationOnCommitFilteredChanges: boolean
+  readonly confirmCommitMessageOverride: boolean
+  readonly confirmWorktreeRemoval: boolean
   readonly showCommitLengthWarning: boolean
   readonly uncommittedChangesStrategy: UncommittedChangesStrategy
   readonly onConfirmDiscardChangesChanged: (checked: boolean) => void
@@ -26,6 +29,9 @@ interface IPromptsPreferencesProps {
   readonly onUncommittedChangesStrategyChanged: (
     value: UncommittedChangesStrategy
   ) => void
+  readonly onAskForConfirmationOnCommitFilteredChanges: (value: boolean) => void
+  readonly onConfirmCommitMessageOverrideChanged: (checked: boolean) => void
+  readonly onConfirmWorktreeRemovalChanged: (checked: boolean) => void
 }
 
 interface IPromptsPreferencesState {
@@ -36,6 +42,9 @@ interface IPromptsPreferencesState {
   readonly confirmCheckoutCommit: boolean
   readonly confirmForcePush: boolean
   readonly confirmUndoCommit: boolean
+  readonly askForConfirmationOnCommitFilteredChanges: boolean
+  readonly confirmCommitMessageOverride: boolean
+  readonly confirmWorktreeRemoval: boolean
   readonly uncommittedChangesStrategy: UncommittedChangesStrategy
 }
 
@@ -56,6 +65,10 @@ export class Prompts extends React.Component<
       confirmForcePush: this.props.confirmForcePush,
       confirmUndoCommit: this.props.confirmUndoCommit,
       uncommittedChangesStrategy: this.props.uncommittedChangesStrategy,
+      askForConfirmationOnCommitFilteredChanges:
+        this.props.askForConfirmationOnCommitFilteredChanges,
+      confirmCommitMessageOverride: this.props.confirmCommitMessageOverride,
+      confirmWorktreeRemoval: this.props.confirmWorktreeRemoval,
     }
   }
 
@@ -111,6 +124,33 @@ export class Prompts extends React.Component<
 
     this.setState({ confirmUndoCommit: value })
     this.props.onConfirmUndoCommitChanged(value)
+  }
+
+  private onAskForConfirmationOnCommitFilteredChanges = (
+    event: React.FormEvent<HTMLInputElement>
+  ) => {
+    const value = event.currentTarget.checked
+
+    this.setState({ askForConfirmationOnCommitFilteredChanges: value })
+    this.props.onAskForConfirmationOnCommitFilteredChanges(value)
+  }
+
+  private onConfirmCommitMessageOverrideChanged = (
+    event: React.FormEvent<HTMLInputElement>
+  ) => {
+    const value = event.currentTarget.checked
+
+    this.setState({ confirmCommitMessageOverride: value })
+    this.props.onConfirmCommitMessageOverrideChanged(value)
+  }
+
+  private onConfirmWorktreeRemovalChanged = (
+    event: React.FormEvent<HTMLInputElement>
+  ) => {
+    const value = event.currentTarget.checked
+
+    this.setState({ confirmWorktreeRemoval: value })
+    this.props.onConfirmWorktreeRemovalChanged(value)
   }
 
   private onConfirmRepositoryRemovalChanged = (
@@ -173,6 +213,20 @@ export class Prompts extends React.Component<
           renderRadioButtonLabelContents={this.renderSwitchBranchOptionLabel}
         />
       </div>
+    )
+  }
+
+  private renderCommittingFilteredChangesPrompt = () => {
+    return (
+      <Checkbox
+        label="Committing changes hidden by filter"
+        value={
+          this.state.askForConfirmationOnCommitFilteredChanges
+            ? CheckboxValue.On
+            : CheckboxValue.Off
+        }
+        onChange={this.onAskForConfirmationOnCommitFilteredChanges}
+      />
     )
   }
 
@@ -247,6 +301,25 @@ export class Prompts extends React.Component<
               }
               onChange={this.onConfirmUndoCommitChanged}
             />
+            <Checkbox
+              label="Overriding commit message with generated message"
+              value={
+                this.state.confirmCommitMessageOverride
+                  ? CheckboxValue.On
+                  : CheckboxValue.Off
+              }
+              onChange={this.onConfirmCommitMessageOverrideChanged}
+            />
+            <Checkbox
+              label="Removing worktrees"
+              value={
+                this.state.confirmWorktreeRemoval
+                  ? CheckboxValue.On
+                  : CheckboxValue.Off
+              }
+              onChange={this.onConfirmWorktreeRemovalChanged}
+            />
+            {this.renderCommittingFilteredChangesPrompt()}
           </div>
         </div>
         {this.renderSwitchBranchOptions()}

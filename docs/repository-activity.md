@@ -1,9 +1,10 @@
 # Repository activity in the Linux fork
 
-This feature is integrated into `ShanePark/desktop`'s `linux` branch, based on
-the 3.4.12 Linux release.
+This feature is integrated into `ShanePark/desktop`'s `linux` branch, which
+tracks upstream Desktop 3.6.5 and publishes the Linux package as
+`3.6.5-linux1` with Electron 42.0.1. Development uses the pinned Node.js
+24.15.0 runtime.
 See [local development](local-development.md) for the fork's Git and Dock workflow.
-It does not replace this fork with Desktop Plus or upgrade the application's dependencies.
 
 ## Using the repository picker
 
@@ -85,6 +86,13 @@ unreadable repositories are not treated as clean: they remain visible in the
 Uncommitted-only filter, with an unavailable status. A failed pass does not
 overwrite the previous known change count with zero.
 
+Activity is keyed by the repository's current worktree path, so a linked
+worktree is scanned and ordered using its own path. Group assignments and manual
+`repositoryOrder` use `mainWorktreePath` as the canonical organization path
+when it is available. Switching worktrees therefore preserves the repository's
+group and manual position while keeping activity data separate for each
+worktree.
+
 ## Meaning of recent
 
 Git status does not provide change timestamps. Initial ordering estimates the
@@ -148,22 +156,19 @@ With this repository's dependencies installed, run:
 node script/test-repository-activity.cjs
 node script/test-repository-activity-ui.cjs
 node script/test-repository-groups.cjs
-yarn test:unit --runInBand app/test/unit/repository-activity-test.ts
+node script/test.mjs app/test/unit/repository-activity-test.ts
 yarn compile:dev
 ```
 
-The first runner has 45 checks, including real temporary Git repositories,
-repeat edits, staged changes, deletions, renames, ignored output, symlinks,
-worktrees, persistence, sorting, failures and concurrency. The second has 23
-wiring checks that execute the modified TSX with stubbed React/DOM and Git
-services; it is not a real Electron GUI test. The Jest adapter includes both
-runners and a nine-case group/commit runner in the normal unit suite.
+The direct runners currently cover 45 repository activity checks, 24 UI wiring
+checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
+and Git services; it is not a real Electron GUI test. The activity unit test
+invokes all three runners through the repository's Node.js test runner.
 
 Before merging, validate the full Electron build and actual UI on Linux:
 check multiple projects edited in an external editor, name filtering while
 sorted, selection/keyboard navigation, unavailable repositories, and scrolling
-with a large repository list. This change does not address inherited Electron
-or other dependency maintenance in the older Linux fork.
+with a large repository list.
 
 Group headings show a chevron and repository count, with indented repository rows.
 Click a heading to collapse or expand it. Visibility, custom group order and

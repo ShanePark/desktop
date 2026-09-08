@@ -1,4 +1,4 @@
-import { Disposable, DisposableLike } from 'event-kit'
+import { Disposable } from 'event-kit'
 
 import {
   IAPIOrganization,
@@ -7,6 +7,7 @@ import {
   IAPICheckSuite,
   IAPIRepoRuleset,
   getDotComAPIEndpoint,
+  IAPICreatePushProtectionBypassResponse,
 } from '../../lib/api'
 import { shell } from '../../lib/app-shell'
 import {
@@ -21,6 +22,7 @@ import {
   CherryPickConflictState,
   MultiCommitOperationConflictState,
   IMultiCommitOperationState,
+  CommitOptions,
 } from '../../lib/app-state'
 import { assertNever, fatalError } from '../../lib/fatal-error'
 import {
@@ -34,6 +36,7 @@ import {
   getBranches,
   getRebaseSnapshot,
   getRepositoryType,
+  listWorktrees,
 } from '../../lib/git'
 import { isGitOnPath } from '../../lib/is-git-on-path'
 import {
@@ -48,6 +51,11 @@ import {
 import { Shell } from '../../lib/shells'
 import { ILaunchStats, StatsStore } from '../../lib/stats'
 import { AppStore } from '../../lib/stores/app-store'
+import type {
+  CopilotFeature,
+  CopilotModelSelectionsByAccount,
+} from '../../lib/stores/copilot-store'
+import type { IBYOKProvider } from '../../lib/copilot/byok'
 import { RepositoryStateCache } from '../../lib/stores/repository-state-cache'
 import { getTipSha } from '../../lib/tip'
 
@@ -93,7 +101,6 @@ import {
   executeMenuItem,
   moveToApplicationsFolder,
   isWindowFocused,
-  showOpenDialog,
 } from '../main-process-proxy'
 import {
   CommitStatusStore,
@@ -123,6 +130,15 @@ import { UnreachableCommitsTab } from '../history/unreachable-commits-dialog'
 import { sendNonFatalException } from '../../lib/helpers/non-fatal-exception'
 import { SignInResult } from '../../lib/stores/sign-in-store'
 import { ICustomIntegration } from '../../lib/custom-integration'
+import { isAbsolute } from 'path'
+import { CLIAction } from '../../lib/cli-action'
+import { BypassReasonType } from '../secret-scanning/bypass-push-protection-dialog'
+import {
+  IConflictResolutionProgress,
+  IFileResolution,
+  ICopilotResolutionSummary,
+} from '../../lib/copilot-conflict-resolution'
+import { WorktreeEntry } from '../../models/worktree'
 
 /**
  * An error handler function.
@@ -216,6 +232,13 @@ export class Dispatcher {
     missing: boolean
   ): Promise<Repository> {
     return this.appStore._updateRepositoryMissing(repository, missing)
+  }
+
+  public updateCommitOptions(
+    repository: Repository,
+    options: Partial<CommitOptions>
+  ) {
+    this.appStore._updateCommitOptions(repository, options)
   }
 
   /** Load the next batch of history for the repository. */
@@ -335,7 +358,9 @@ export class Dispatcher {
   /** Change the file's includedness. */
   public changeFileIncluded(
     repository: Repository,
-    file: WorkingDirectoryFileChange,
+    file:
+      | WorkingDirectoryFileChange
+      | ReadonlyArray<WorkingDirectoryFileChange>,
     include: boolean
   ): Promise<void> {
     return this.appStore._changeFileIncluded(repository, file, include)
@@ -394,7 +419,7 @@ export class Dispatcher {
   /**
    * Close the popup with given id.
    */
-  public closePopupById(popupId: string) {
+  public closePopupById(popupId: number) {
     return this.appStore._closePopupById(popupId)
   }
 
@@ -411,6 +436,16 @@ export class Dispatcher {
   /** Close the specified foldout */
   public closeFoldout(foldout: FoldoutType): Promise<void> {
     return this.appStore._closeFoldout(foldout)
+  }
+
+  /** Show the worktrees foldout */
+  public showWorktreesFoldout(): Promise<void> {
+    return this.showFoldout({ type: FoldoutType.Worktree })
+  }
+
+  /** Close the worktrees foldout */
+  public closeWorktreesFoldout(): Promise<void> {
+    return this.closeFoldout(FoldoutType.Worktree)
   }
 
   /**
@@ -969,6 +1004,76 @@ export class Dispatcher {
     return this.appStore._resetBranchDropdownWidth()
   }
 
+  public setWorktreeDropdownWidth(width: number): Promise<void> {
+    return this.appStore._setWorktreeDropdownWidth(width)
+  }
+
+  public resetWorktreeDropdownWidth(): Promise<void> {
+    return this.appStore._resetWorktreeDropdownWidth()
+  }
+
+  /**
+   * Switch the repository to a different worktree path.
+   *
+   * If the target path is already registered as a separate repository, that
+   * repository is selected instead.
+   */
+  public async switchWorktree(
+    repository: Repository,
+    worktree: WorktreeEntry
+  ): Promise<void> {
+    await this.appStore
+      ._switchWorktree(repository, worktree)
+      .catch(e => this.postError(e))
+  }
+
+  /**
+   * Rename (move) a worktree to a new path and keep the worktree list in sync.
+   * If the worktree being renamed is the currently selected one, the repository
+   * is switched to its new path.
+   *
+   * Returns a value indicating whether the rename succeeded. On failure the
+   * error is surfaced to the user via `postError`.
+   */
+  public async moveWorktree(
+    repository: Repository,
+    worktreePath: string,
+    newPath: string
+  ): Promise<boolean> {
+    return this.appStore
+      ._moveWorktree(repository, worktreePath, newPath)
+      .then(() => true)
+      .catch(e => {
+        this.postError(e)
+        return false
+      })
+  }
+
+  /**
+   * Delete a worktree. If the worktree being deleted is the currently selected
+   * one, the repository is switched to the main worktree first.
+   */
+  public async deleteWorktree(
+    repository: Repository,
+    worktreePath: string,
+    force?: boolean
+  ): Promise<void> {
+    await this.appStore
+      ._deleteWorktree(repository, worktreePath, force)
+      .catch(e => this.postError(e))
+  }
+
+  /**
+   * Request deletion of a worktree, showing a confirmation dialog if the
+   * user's preferences require it.
+   */
+  public requestDeleteWorktree(
+    repository: Repository,
+    worktreePath: string
+  ): void {
+    this.appStore._requestDeleteWorktree(repository, worktreePath)
+  }
+
   /**
    * Set the width of the Push/Push toolbar button to the given value.
    * This affects the toolbar button and its dropdown element.
@@ -1068,6 +1173,87 @@ export class Dispatcher {
     message: ICommitMessage
   ): Promise<void> {
     return this.appStore._setCommitMessage(repository, message)
+  }
+
+  public promptOverrideWithGeneratedCommitMessage(
+    repository: Repository,
+    filesSelected: ReadonlyArray<WorkingDirectoryFileChange>
+  ) {
+    return this.appStore._promptOverrideWithGeneratedCommitMessage(
+      repository,
+      filesSelected
+    )
+  }
+
+  public updateCommitMessageGenerationDisclaimerLastSeen() {
+    return this.appStore._updateCommitMessageGenerationDisclaimerLastSeen()
+  }
+
+  public generateCommitMessage(
+    repository: Repository,
+    filesSelected: ReadonlyArray<WorkingDirectoryFileChange>
+  ) {
+    return this.appStore._generateCommitMessage(repository, filesSelected)
+  }
+
+  public cancelGenerateCommitMessage(repository: Repository) {
+    return this.appStore._cancelGenerateCommitMessage(repository)
+  }
+
+  /**
+   * Use Copilot to analyze and suggest resolutions for conflicts
+   * from merge, rebase, or cherry-pick operations.
+   */
+  public resolveConflictsWithCopilot(
+    repository: Repository,
+    onProgress?: (progress: IConflictResolutionProgress) => void
+  ): Promise<{
+    readonly resolutions: ReadonlyArray<IFileResolution>
+    readonly summary: ICopilotResolutionSummary
+  } | null> {
+    return this.appStore._resolveConflictsWithCopilot(repository, onProgress)
+  }
+
+  /**
+   * Start the full Copilot conflict resolution flow: call the API and
+   * transition to the result dialog.
+   */
+  public startCopilotConflictResolution(repository: Repository): Promise<void> {
+    return this.appStore._startCopilotConflictResolution(repository)
+  }
+
+  /**
+   * Cancel the in-flight Copilot conflict resolution, tearing down the
+   * underlying SDK turn immediately rather than letting it run to completion.
+   */
+  public abortCopilotConflictResolution(repository: Repository): void {
+    return this.appStore._abortCopilotConflictResolution(repository)
+  }
+
+  /**
+   * User-facing entry point invoked from the manual conflicts dialog's
+   * "Resolve with Copilot" button. Handles account-availability check,
+   * first-click tracking, and the AI-tool disclaimer popup before
+   * transitioning to the loading interstitial.
+   */
+  public attemptCopilotConflictResolution(
+    repository: Repository
+  ): Promise<void> {
+    return this.appStore._attemptCopilotConflictResolution(repository)
+  }
+
+  public updateCopilotConflictResolutionDisclaimerLastSeen() {
+    return this.appStore._updateCopilotConflictResolutionDisclaimerLastSeen()
+  }
+
+  /**
+   * Write Copilot-resolved file contents to disk and stage them.
+   * Called when the user confirms the resolutions from the result dialog.
+   */
+  public applyCopilotConflictResolutions(
+    repository: Repository
+  ): Promise<void> {
+    return this.appStore._applyCopilotConflictResolutions(repository)
   }
 
   /** Remove the given account from the app. */
@@ -1447,6 +1633,21 @@ export class Dispatcher {
   }
 
   /**
+   * Opens a path in a selected external editor without changing preferences.
+   */
+  public async openInSelectedExternalEditor(
+    fullPath: string,
+    selectedEditor: string | null,
+    customEditor: ICustomIntegration | null
+  ): Promise<void> {
+    return this.appStore._openInSelectedExternalEditor(
+      fullPath,
+      selectedEditor,
+      customEditor
+    )
+  }
+
+  /**
    * Persist the given content to the repository's root .gitignore.
    *
    * If the repository root doesn't contain a .gitignore file one
@@ -1637,14 +1838,8 @@ export class Dispatcher {
   /**
    * Update the location of an existing repository and clear the missing flag.
    */
-  public async relocateRepository(repository: Repository): Promise<void> {
-    const path = await showOpenDialog({
-      properties: ['openDirectory'],
-    })
-
-    if (path !== null) {
-      await this.updateRepositoryPath(repository, path)
-    }
+  public relocateRepository(repository: Repository): Promise<void> {
+    return this.appStore._relocateRepository(repository)
   }
 
   /**
@@ -1661,14 +1856,6 @@ export class Dispatcher {
       repository,
       workflowPreferences
     )
-  }
-
-  /** Update the repository's path. */
-  private async updateRepositoryPath(
-    repository: Repository,
-    path: string
-  ): Promise<void> {
-    await this.appStore._updateRepositoryPath(repository, path)
   }
 
   public async setAppFocusState(isFocused: boolean): Promise<void> {
@@ -1769,6 +1956,11 @@ export class Dispatcher {
     }
 
     if (filepath !== null) {
+      if (isAbsolute(filepath)) {
+        log.error(`Refusing to open absolute path: ${filepath}`)
+        return
+      }
+
       const resolved = await resolveWithin(repository.path, filepath)
 
       if (resolved !== null) {
@@ -1856,6 +2048,56 @@ export class Dispatcher {
     return repository
   }
 
+  public async dispatchCLIAction(action: CLIAction) {
+    if (action.kind === 'clone-url') {
+      const { branch, url } = action
+
+      if (branch) {
+        await this.openBranchNameFromUrl(url, branch)
+      } else {
+        await this.openOrCloneRepository(url)
+      }
+    } else if (action.kind === 'open-repository') {
+      // user may accidentally provide a folder within the repository
+      // this ensures we use the repository root, if it is actually a repository
+      // otherwise we consider it an untracked repository
+      const path = await getRepositoryType(action.path)
+        .then(t =>
+          t.kind === 'regular' ? t.topLevelWorkingDirectory : action.path
+        )
+        .catch(e => {
+          log.error('Could not determine repository type', e)
+          return action.path
+        })
+
+      const { repositories } = this.appStore.getState()
+      const existingRepository = matchExistingRepository(repositories, path)
+
+      if (existingRepository) {
+        await this.selectRepository(existingRepository)
+        return
+      }
+
+      // Try to locate a repository that has a shared main worktree with the
+      // provided path so that we can switch to the worktree instead of adding
+      // a new repository.
+      const worktrees = await listWorktrees(path).catch(e => {
+        log.error('Could not list worktrees', e)
+        return []
+      })
+      const worktree = matchExistingRepository(worktrees, path)
+      const sharedCommonDirRepository = repositories.find(
+        r => matchExistingRepository(worktrees, r.path) !== undefined
+      )
+      if (worktree && sharedCommonDirRepository instanceof Repository) {
+        await this.switchWorktree(sharedCommonDirRepository, worktree)
+        return
+      }
+
+      await this.showPopup({ type: PopupType.AddRepository, path })
+    }
+  }
+
   public async dispatchURLAction(action: URLActionType): Promise<void> {
     switch (action.name) {
       case 'oauth':
@@ -1876,30 +2118,6 @@ export class Dispatcher {
 
       case 'open-repository-from-url':
         this.openRepositoryFromUrl(action)
-        break
-
-      case 'open-repository-from-path':
-        // user may accidentally provide a folder within the repository
-        // this ensures we use the repository root, if it is actually a repository
-        // otherwise we consider it an untracked repository
-        const path = await getRepositoryType(action.path)
-          .then(t =>
-            t.kind === 'regular' ? t.topLevelWorkingDirectory : action.path
-          )
-          .catch(e => {
-            log.error('Could not determine repository type', e)
-            return action.path
-          })
-
-        const { repositories } = this.appStore.getState()
-        const existingRepository = matchExistingRepository(repositories, path)
-
-        if (existingRepository) {
-          await this.selectRepository(existingRepository)
-          this.statsStore.recordAddExistingRepository()
-        } else {
-          await this.showPopup({ type: PopupType.AddRepository, path })
-        }
         break
 
       default:
@@ -2140,6 +2358,8 @@ export class Dispatcher {
           retryAction.files,
           false
         )
+      case RetryActionType.PopStash:
+        return this.popStash(retryAction.repository, retryAction.stashEntry)
       default:
         return assertNever(retryAction, `Unknown retry action: ${retryAction}`)
     }
@@ -2422,6 +2642,18 @@ export class Dispatcher {
     return this.appStore._setConfirmUndoCommitSetting(value)
   }
 
+  public setConfirmCommitFilteredChanges(value: boolean) {
+    return this.appStore._setConfirmCommitFilteredChanges(value)
+  }
+
+  public setConfirmCommitMessageOverrideSetting(value: boolean) {
+    return this.appStore._setConfirmCommitMessageOverrideSetting(value)
+  }
+
+  public setConfirmWorktreeRemovalSetting(value: boolean) {
+    return this.appStore._setConfirmWorktreeRemovalSetting(value)
+  }
+
   /**
    * Converts a local repository to use the given fork
    * as its default remote and associated `GitHubRepository`.
@@ -2527,7 +2759,7 @@ export class Dispatcher {
     ref: string,
     callback: StatusCallBack,
     branchName?: string
-  ): DisposableLike {
+  ): Disposable {
     return this.commitStatusStore.subscribe(
       repository,
       ref,
@@ -3716,6 +3948,22 @@ export class Dispatcher {
     return this.appStore._setMultiCommitOperationStep(repository, step)
   }
 
+  /**
+   * Atomically transition the multi commit operation step and set the
+   * useCopilotConflictResolution flag in a single store update.
+   */
+  public setMultiCommitOperationStepWithCopilotResolution(
+    repository: Repository,
+    step: MultiCommitOperationStep,
+    useCopilotConflictResolution: boolean
+  ): void {
+    this.appStore._setMultiCommitOperationStepWithCopilotResolution(
+      repository,
+      step,
+      useCopilotConflictResolution
+    )
+  }
+
   /** Method to clear multi commit operation state. */
   public endMultiCommitOperation(repository: Repository) {
     this.appStore._endMultiCommitOperation(repository)
@@ -3960,11 +4208,141 @@ export class Dispatcher {
     return this.appStore._updateShowDiffCheckMarks(diffCheckMarks)
   }
 
+  public setPreferAbsoluteDates(value: boolean) {
+    return this.appStore._setPreferAbsoluteDates(value)
+  }
+
   public testPruneBranches() {
     return this.appStore._testPruneBranches()
   }
 
   public editGlobalGitConfig() {
     return this.appStore._editGlobalGitConfig()
+  }
+
+  public setChangesListFilterText(repository: Repository, filterText: string) {
+    return this.appStore._setChangesListFilterText(repository, filterText)
+  }
+  public setIncludedChangesInCommitFilter(
+    repository: Repository,
+    isIncludedInCommit: boolean
+  ) {
+    return this.appStore._setIncludedChangesInCommitFilter(
+      repository,
+      isIncludedInCommit
+    )
+  }
+
+  public setFilterNewFiles(repository: Repository, isNewFile: boolean) {
+    return this.appStore._setFilterNewFiles(repository, isNewFile)
+  }
+
+  public setFilterModifiedFiles(
+    repository: Repository,
+    isModifiedFile: boolean
+  ) {
+    return this.appStore._setFilterModifiedFiles(repository, isModifiedFile)
+  }
+
+  public setFilterDeletedFiles(repository: Repository, isDeletedFile: boolean) {
+    return this.appStore._setFilterDeletedFiles(repository, isDeletedFile)
+  }
+
+  public setFilterExcludedFiles(
+    repository: Repository,
+    isExcludedFromCommit: boolean
+  ) {
+    return this.appStore._setFilterExcludedFiles(
+      repository,
+      isExcludedFromCommit
+    )
+  }
+
+  public async createPushProtectionBypass(
+    reason: BypassReasonType,
+    placeholderId: string,
+    bypassURL: string
+  ): Promise<IAPICreatePushProtectionBypassResponse | null> {
+    return this.appStore._createPushProtectionBypass(
+      reason,
+      placeholderId,
+      bypassURL
+    )
+  }
+
+  public toggleChangesFilterVisibility() {
+    this.appStore._toggleChangesFilterVisibility()
+  }
+
+  /** Set the selected Copilot model for a specific feature. */
+  public setSelectedCopilotModel(
+    account: Account,
+    feature: CopilotFeature,
+    model: string | null
+  ) {
+    return this.appStore._setSelectedCopilotModel(account, feature, model)
+  }
+
+  /** Replace all account-scoped Copilot model selections at once. */
+  public setSelectedCopilotModelsByAccount(
+    modelsByAccount: CopilotModelSelectionsByAccount
+  ) {
+    return this.appStore._setSelectedCopilotModelsByAccount(modelsByAccount)
+  }
+
+  public setAlwaysUseCopilotForConflictResolution(value: boolean): void {
+    this.appStore._setAlwaysUseCopilotForConflictResolution(value)
+  }
+
+  /** Fetch the list of available Copilot models from the SDK. */
+  public fetchCopilotModels(): Promise<void> {
+    return this.appStore._fetchCopilotModels()
+  }
+
+  /** Fetch Copilot quota usage snapshots from the SDK. */
+  public fetchCopilotQuotaSnapshots(): Promise<void> {
+    return this.appStore._fetchCopilotQuotaSnapshots()
+  }
+
+  /**
+   * Add a new BYOK Copilot provider. The secret (API key / bearer token)
+   * is stored separately in the OS keychain.
+   */
+  public async addCopilotBYOKProvider(
+    provider: IBYOKProvider,
+    secret: string | null
+  ): Promise<void> {
+    try {
+      await this.appStore._addCopilotBYOKProvider(provider, secret)
+    } catch (e) {
+      log.error(`Error adding BYOK Copilot provider '${provider.name}'`, e)
+      this.postError(e)
+    }
+  }
+
+  /**
+   * Update a BYOK Copilot provider. Pass `secret = undefined` to leave the
+   * stored secret untouched, `null` to clear it, or a string to overwrite it.
+   */
+  public async updateCopilotBYOKProvider(
+    provider: IBYOKProvider,
+    secret: string | null | undefined
+  ): Promise<void> {
+    try {
+      await this.appStore._updateCopilotBYOKProvider(provider, secret)
+    } catch (e) {
+      log.error(`Error updating BYOK Copilot provider '${provider.name}'`, e)
+      this.postError(e)
+    }
+  }
+
+  /** Remove a BYOK Copilot provider and its stored secret. */
+  public async deleteCopilotBYOKProvider(id: string): Promise<void> {
+    try {
+      await this.appStore._deleteCopilotBYOKProvider(id)
+    } catch (e) {
+      log.error(`Error deleting BYOK Copilot provider '${id}'`, e)
+      this.postError(e)
+    }
   }
 }
