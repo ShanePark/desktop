@@ -131,6 +131,11 @@ the app. The Dock uses `.local-desktop/current`, separate from `dist`, so
 rebuilding does not remove the running app's files. To deploy an already built
 app again, run `python3 script/local-desktop.py deploy`.
 
+Every deploy refreshes the same launcher before restarting the app. Its stable
+`github-desktop-local.desktop` filename keeps the existing Dock pin, while
+`StartupWMClass` is read from `app/package.json` so it matches Electron's
+Linux window class.
+
 Runtime files and launch output (`.local-desktop/launch.log`) are ignored by
 Git. Deployment retains the preceding runtime and asks only this checkout's
 GitHub Desktop process to exit before starting the new version.
@@ -157,6 +162,7 @@ node script/test-repository-activity.cjs
 node script/test-repository-activity-ui.cjs
 node script/test-repository-groups.cjs
 node script/test.mjs app/test/unit/repository-activity-test.ts
+python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 

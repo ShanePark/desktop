@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Keep the Dock app available during builds; deploy and restart on success."""
 import fcntl
+import json
 import os
 from pathlib import Path
 import shutil
@@ -14,7 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / '.local-desktop'
 SOURCE = ROOT / 'dist/github-desktop-linux-x64'
 CURRENT = STATE / 'current'
-ENTRY = Path.home() / '.local/share/applications/github-desktop-local.desktop'
+DESKTOP_ID = 'github-desktop-local'
+DESKTOP_FILENAME = f'{DESKTOP_ID}.desktop'
+APP_NAME = json.loads((ROOT / 'app/package.json').read_text())['name']
+ENTRY = Path.home() / '.local/share/applications' / DESKTOP_FILENAME
 
 
 def running():
@@ -38,6 +42,9 @@ def running():
 def deploy():
     if not (SOURCE / 'github-desktop').is_file():
         raise RuntimeError('No packaged build found. Run yarn build:local first.')
+    # Keep the launcher identity in sync before stopping the currently running
+    # app. The desktop file path stays stable, so an existing Dock pin survives.
+    install_launcher()
     release = STATE / ('release-' + uuid.uuid4().hex)
     print('Preparing Dock app…', flush=True)
     shutil.copytree(SOURCE, release)
@@ -86,7 +93,7 @@ Type=Application
 StartupNotify=true
 Categories=GNOME;GTK;Development;
 MimeType=x-scheme-handler/x-github-client;
-StartupWMClass=GitHub Desktop
+StartupWMClass={APP_NAME}
 Terminal=false
 X-GNOME-UsesNotifications=true
 ''')
@@ -115,8 +122,6 @@ def main():
             if not executable.is_file():
                 raise RuntimeError('Run yarn build:local to prepare the Dock app.')
         else:
-            if command == 'install':
-                install_launcher()
             deploy()
             return
     os.chdir(ROOT)
