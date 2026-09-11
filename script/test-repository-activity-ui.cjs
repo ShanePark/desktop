@@ -22,9 +22,16 @@ class Repository {
   constructor(path, id) { this.path = path; this.id = id; this.name = Path.basename(path) }
 }
 class Monitor {
-  constructor(sample, notify) { this.notify = notify; this.paths = []; this.refreshes = 0; this.stopped = false }
+  constructor(sample, notify, initial = new Map()) {
+    this.notify = notify
+    this.initial = initial
+    this.paths = []
+    this.refreshes = 0
+    this.refreshOptions = []
+    this.stopped = false
+  }
   setPaths(paths) { const changed = JSON.stringify(paths) !== JSON.stringify(this.paths); this.paths = paths; return changed }
-  refresh() { this.refreshes++; return Promise.resolve() }
+  refresh(options) { this.refreshes++; this.refreshOptions.push(options); return Promise.resolve() }
   stop() { this.stopped = true }
 }
 const row = r => ({ id: String(r.id), repository: r, text: [r.name], changedFilesCount: 0, needsDisambiguation: false, aheadBehind: null })
@@ -128,6 +135,45 @@ test('mount scans every registered repository despite active filters', () => {
   picker.componentDidMount()
   Assert.deepEqual(picker.activityMonitor.paths, repositories.map(r => r.path))
   Assert.equal(picker.activityMonitor.refreshes, 1)
+  Assert.deepEqual(picker.activityMonitor.refreshOptions, [{ maxAge: 15000 }])
+})
+test('reopening reuses verified session snapshots before the background refresh', () => {
+  const cached = new Map(repositories.map((repository, index) => [
+    activityKey(repository.path), snapshot(index + 1),
+  ]))
+  const source = new RepositoriesList(props)
+  source.activityMonitor.notify({ repositories: cached, checking: false, completed: 2, total: 2 })
+
+  const reopened = new RepositoriesList(props)
+  const groups = reopened.render().props.children[0].props.groups
+  const working = groups.find(group => group.identifier === '_Working_').items
+  Assert.deepEqual(new Set(working.map(item => item.id)), new Set(['1', '2']))
+  Assert.equal(reopened.activityMonitor.initial.size, 2)
+  Assert.equal(reopened.activityMonitor.refreshes, 0)
+
+  reopened.refreshActivity()
+  Assert.deepEqual(reopened.activityMonitor.refreshOptions, [{ maxAge: 15000 }])
+})
+test('reopening retains partial in-progress session results', () => {
+  const partial = new Map([[activityKey(repositories[1].path), snapshot(1)]])
+  const source = new RepositoriesList(props)
+  source.activityMonitor.notify({ repositories: partial, checking: true, completed: 1, total: 2 })
+
+  const reopened = new RepositoriesList(props)
+  const groups = reopened.render().props.children[0].props.groups
+  const working = groups.find(group => group.identifier === '_Working_').items
+  Assert.deepEqual(working.map(item => item.id), ['2'])
+})
+test('repository path changes replace monitored paths and trigger a refresh', () => {
+  const initialProps = { ...props, repositories: [repositories[0], repositories[1]] }
+  const changing = new RepositoriesList(initialProps)
+  const before = changing.activityMonitor.refreshes
+  const added = new Repository('/fixture/new-project', 3)
+  const nextProps = { ...initialProps, repositories: [repositories[0], added] }
+  changing.props = nextProps
+  changing.componentDidUpdate(initialProps)
+  Assert.deepEqual(changing.activityMonitor.paths, [repositories[0].path, added.path])
+  Assert.equal(changing.activityMonitor.refreshes, before + 1)
 })
 test('activity filter hides known-clean rows without dropping name search', () => {
   picker.activityMonitor.notify({ repositories: new Map(repositories.map((r, i) => [activityKey(r.path), snapshot(i)])), checking: false, completed: 2, total: 2 })

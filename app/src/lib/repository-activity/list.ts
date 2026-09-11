@@ -60,8 +60,12 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   organization?: IRepositoryOrganization
 ): ReadonlyArray<IActivityListGroup<T, G>> {
   const snapshot = (row: T) => activities.get(activityKey(activityPath(row)))
+  const currentActivity = (row: T) => {
+    const activity = snapshot(row)
+    return activityIsUnknown(activity) ? undefined : activity
+  }
   const dirty = (row: T) =>
-    (snapshot(row)?.changedFilesCount ?? row.changedFilesCount) > 0
+    (currentActivity(row)?.changedFilesCount ?? row.changedFilesCount) > 0
   const include = (row: T) =>
     !preferences.onlyUncommitted ||
     row.repository.id < 0 ||
@@ -69,8 +73,8 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     activityIsUnknown(snapshot(row))
 
   const annotate = (row: T): T => {
-    const activity = snapshot(row)
-    if (activity === undefined || activity.error || activity.checkedAt === 0) {
+    const activity = currentActivity(row)
+    if (activity === undefined) {
       return row
     }
     return {
@@ -196,7 +200,8 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       .filter(
         row =>
           dirty(row) ||
-          (snapshot(row)?.unpushedCount ?? row.aheadBehind?.ahead ?? 0) > 0
+          (currentActivity(row)?.unpushedCount ?? row.aheadBehind?.ahead ?? 0) >
+            0
       )
       .map(row => row.repository.id)
   )

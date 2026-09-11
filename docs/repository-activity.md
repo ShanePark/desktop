@@ -65,10 +65,18 @@ Every registered repository path is scanned, not just the selected repository
 or filtered rows. Separately registered linked worktrees are checked by their
 own path. Scans run when the picker mounts, on window focus, when the registered
 paths change, and every 15 seconds while the picker is mounted and
-the document is visible and focused. This is polling, not continuous monitoring
-while the picker is closed. An already started pass may finish after focus is
-lost. Closing the picker cancels queued work and suppresses late UI callbacks;
-at most two already running Git commands finish within their timeout.
+the document is visible and focused. Successful checks less than 15 seconds
+old are reused instead of launching another Git check. This is polling, not
+continuous monitoring while the picker is closed. An already started pass may
+finish after focus is lost. Closing the picker cancels queued work and suppresses
+late UI callbacks; at most two already running Git commands finish within their timeout.
+Completed repository checks update the list immediately, without waiting for
+the remaining repositories in the pass. These results stay in memory when
+the picker closes, including results from an unfinished pass. Reopening the
+picker immediately shows the last known Working list while outdated results
+are refreshed. Before a disk-cached result is verified after app startup,
+or when a check fails, Working uses the same available change and unpushed
+counts as the repository row indicators.
 
 The scanner uses bundled Git with porcelain v1 NUL-separated output, optional
 index locking disabled, and fsmonitor hooks disabled for this read. It launches
@@ -81,9 +89,10 @@ does not promote a repository.
 Settings and a bounded metadata cache are stored in this installation's
 localStorage (`desktop.repository-activity.*.v1`). The cache contains local
 paths, counts, timestamps and metadata fingerprints, not file contents or
-credentials. Restored entries are unverified until checked again. Missing or
-unreadable repositories are not treated as clean: they remain visible in the
-Uncommitted-only filter, with an unavailable status. A failed pass does not
+credentials. Entries restored from disk after app startup are unverified until
+checked again; reopening the picker preserves checks from the current session.
+Missing or unreadable repositories are not treated as clean: they remain visible
+in the Uncommitted-only filter, with an unavailable status. A failed pass does not
 overwrite the previous known change count with zero.
 
 Activity is keyed by the repository's current worktree path, so a linked
@@ -166,7 +175,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 45 repository activity checks, 24 UI wiring
+The direct runners currently cover 50 repository activity checks, 27 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.

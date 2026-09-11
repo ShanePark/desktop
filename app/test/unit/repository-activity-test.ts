@@ -11,8 +11,8 @@ const run = promisify(execFile)
 // They create and delete only temporary repositories, never user repositories.
 describe('repository activity', () => {
   const runners = [
-    ['test-repository-activity.cjs', '45/45 tests passed'],
-    ['test-repository-activity-ui.cjs', '24/24 UI wiring tests passed'],
+    ['test-repository-activity.cjs', '50/50 tests passed'],
+    ['test-repository-activity-ui.cjs', '27/27 UI wiring tests passed'],
     ['test-repository-groups.cjs', '10/10 repository group tests passed'],
   ] as const
 

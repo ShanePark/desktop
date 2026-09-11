@@ -35,7 +35,8 @@ import {
   IActivityPreferences,
   readActivityPreferences,
   saveActivityPreferences,
-  readActivityCache,
+  readActivitySessionCache,
+  saveActivitySessionCache,
   saveActivityCache,
 } from '../../lib/repository-activity/preferences'
 import { activityKey } from '../../lib/repository-activity/status'
@@ -133,6 +134,7 @@ interface IRepositoriesListState {
 }
 
 const RowHeight = 29
+const ActivityFreshnessWindow = 15 * 1000
 
 /**
  * Iterate over all groups until a list item is found that matches
@@ -207,7 +209,7 @@ export class RepositoriesList extends React.Component<
   public constructor(props: IRepositoriesListProps) {
     super(props)
 
-    const initialActivity = readActivityCache(localStorage)
+    const initialActivity = readActivitySessionCache(localStorage)
     this.state = {
       selectedItem: null,
       organization: readRepositoryOrganization(localStorage),
@@ -226,6 +228,7 @@ export class RepositoriesList extends React.Component<
     this.activityMonitor = new RepositoryActivityMonitor(
       readRepositoryActivity,
       activity => {
+        saveActivitySessionCache(localStorage, activity.repositories)
         if (!activity.checking) {
           saveActivityCache(localStorage, activity.repositories)
         }
@@ -282,7 +285,7 @@ export class RepositoriesList extends React.Component<
   }
 
   private refreshActivity = () => {
-    void this.activityMonitor.refresh()
+    void this.activityMonitor.refresh({ maxAge: ActivityFreshnessWindow })
   }
 
   private refreshVisibleActivity = () => {

@@ -8,6 +8,11 @@ export interface IActivityState {
   readonly total: number
 }
 
+export interface IActivityRefreshOptions {
+  /** Reuse successful checks newer than this many milliseconds. */
+  readonly maxAge?: number
+}
+
 /** Bounded, coalesced scans; stopping cancels queued work and late notifications. */
 export class RepositoryActivityMonitor {
   private paths: ReadonlyArray<string> = []
@@ -46,16 +51,20 @@ export class RepositoryActivityMonitor {
     return true
   }
 
-  public refresh(): Promise<void> {
+  public refresh(options: IActivityRefreshOptions = {}): Promise<void> {
     if (this.stopped) {
       return Promise.resolve()
     }
     if (this.running !== null) {
       return this.running
     }
+    const maxAge = options.maxAge ?? 0
+    if (!Number.isFinite(maxAge) || maxAge < 0) {
+      throw new Error('Activity freshness window must be a non-negative number')
+    }
     // Queue the pass so the running promise is assigned before any callback.
     this.running = Promise.resolve()
-      .then(() => this.run())
+      .then(() => this.run(maxAge))
       .finally(() => {
         this.running = null
       })
@@ -67,7 +76,7 @@ export class RepositoryActivityMonitor {
     this.generation++
   }
 
-  private async run(): Promise<void> {
+  private async run(maxAge: number): Promise<void> {
     while (!this.stopped) {
       const generation = this.generation
       const paths = this.paths
@@ -89,6 +98,10 @@ export class RepositoryActivityMonitor {
           const path = paths[next++]
           const key = activityKey(path)
           const previous = this.cache.get(key)
+          if (this.isFresh(previous, maxAge)) {
+            completed++
+            continue
+          }
           try {
             const sample = await this.sample(path)
             results.set(key, advanceActivity(previous, sample, this.now()))
@@ -107,14 +120,11 @@ export class RepositoryActivityMonitor {
             })
           }
           completed++
-          if (
-            !this.stopped &&
-            generation === this.generation &&
-            completed % 20 === 0
-          ) {
-            // Progress updates do not reshuffle the list for every repository.
+          if (!this.stopped && generation === this.generation) {
+            // Publish a snapshot so completed repositories can move to Working
+            // without exposing a map that later completions will mutate.
             this.changed({
-              repositories: this.cache,
+              repositories: new Map(results),
               checking: true,
               completed,
               total: paths.length,
@@ -140,5 +150,22 @@ export class RepositoryActivityMonitor {
       })
       return
     }
+  }
+
+  private isFresh(
+    activity: IRepositoryActivity | undefined,
+    maxAge: number
+  ): boolean {
+    if (
+      maxAge === 0 ||
+      activity === undefined ||
+      activity.error ||
+      activity.checkedAt <= 0
+    ) {
+      return false
+    }
+
+    const age = this.now() - activity.checkedAt
+    return age >= 0 && age < maxAge
   }
 }

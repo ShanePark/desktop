@@ -15,6 +15,16 @@ const PreferencesKey = 'desktop.repository-activity.preferences.v1'
 const CacheKey = 'desktop.repository-activity.cache.v1'
 const MaximumEntries = 5000
 
+// The repository picker is mounted only while its foldout is open. Keep the
+// latest activity snapshots for the lifetime of the storage object so opening
+// the picker again can reuse checks from the same app session. A WeakMap keeps
+// this state scoped to the app window without retaining replacement storage
+// objects indefinitely.
+const activitySessionCaches = new WeakMap<
+  IActivityStorage,
+  ReadonlyMap<string, IRepositoryActivity>
+>()
+
 export function isActivitySort(value: string): value is ActivitySort {
   return value === 'name' || value === 'dirty-first' || value === 'recent'
 }
@@ -114,6 +124,32 @@ export function readActivityCache(
     // A cache is optional; it must never prevent opening a repository.
   }
   return result
+}
+
+/**
+ * Read the in-memory activity cache for this app session. The persisted cache
+ * is only used to initialize the session once, so restored entries remain
+ * unverified until the monitor checks them.
+ */
+export function readActivitySessionCache(
+  storage: IActivityStorage
+): ReadonlyMap<string, IRepositoryActivity> {
+  const cached = activitySessionCaches.get(storage)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  const initial = readActivityCache(storage)
+  activitySessionCaches.set(storage, initial)
+  return initial
+}
+
+/** Store an immutable activity snapshot for reuse while this app session is alive. */
+export function saveActivitySessionCache(
+  storage: IActivityStorage,
+  cache: ReadonlyMap<string, IRepositoryActivity>
+): void {
+  activitySessionCaches.set(storage, new Map(cache))
 }
 
 export function saveActivityCache(

@@ -185,6 +185,55 @@ async function main() {
       const data = new Map([[key(a.repository.path), { ...snap(0), checkedAt: 0 }]])
       Assert.deepEqual(ids(project([group('all', [a])], data, prefs('recent', true), 'activity')), ['1'])
     })
+    test('stale snapshots fall back to current row indicators for Working', () => {
+      const dirty = {
+        ...row(1, 'dirty'),
+        changedFilesCount: 3,
+        aheadBehind: { ahead: 0, behind: 1 },
+      }
+      const ahead = {
+        ...row(2, 'ahead'),
+        aheadBehind: { ahead: 2, behind: 0 },
+      }
+      const clean = {
+        ...row(3, 'clean'),
+        aheadBehind: { ahead: 0, behind: 0 },
+      }
+      const organization = {
+        groups: [{ id: 'group-a', name: 'A' }],
+        assignments: {
+          [dirty.repository.path]: 'group-a',
+          [ahead.repository.path]: 'group-a',
+          [clean.repository.path]: 'group-a',
+        },
+      }
+      for (const invalid of [{ checkedAt: 0 }, { error: true }]) {
+        const stale = { ...snap(0), unpushedCount: 0, ...invalid }
+        const positive = { ...snap(5, 500), unpushedCount: 4, ...invalid }
+        const result = project(
+          [group('all', [dirty, ahead, clean])],
+          new Map([
+            [key(dirty.repository.path), stale],
+            [key(ahead.repository.path), stale],
+            [key(clean.repository.path), positive],
+          ]),
+          prefs(),
+          'activity',
+          organization
+        )
+        const working = result.find(g => g.identifier === '_Working_').items
+        Assert.deepEqual(working.map(r => r.id).sort(), ['1', '2'])
+        Assert.equal(working.find(r => r.id === '1').changedFilesCount, 3)
+        Assert.deepEqual(working.find(r => r.id === '2').aheadBehind, {
+          ahead: 2,
+          behind: 0,
+        })
+        Assert.deepEqual(
+          result.find(g => g.identifier === 'group-a').items.map(r => r.id),
+          ['3']
+        )
+      }
+    })
     test('name mode preserves original groups and pin order', () => {
       const z = row(2, 'zeta'), a = row(1, 'alpha')
       const result = project([group('pinned', [z]), group('owner', [a])], new Map(), prefs('name'), 'activity')
@@ -235,6 +284,29 @@ async function main() {
       Assert.equal(restored.checkedAt, 0); Assert.equal(restored.lastChangedAt, 100)
       Assert.equal(restored.fingerprint, snap(1).fingerprint)
     })
+    test('session snapshots reuse verified progress while disk fallbacks stay unverified', () => {
+      const storage = memoryStorage()
+      const path = key('fixture/session')
+      const verified = { ...snap(1, 700), checkedAt: 700 }
+      const progress = new Map([[path, verified]])
+
+      Prefs.saveActivityCache(storage, progress)
+      const persisted = Prefs.readActivityCache(storage)
+      Assert.equal(persisted.get(path).checkedAt, 0)
+      Assert.equal(
+        Prefs.readActivitySessionCache(storage).get(path).checkedAt,
+        0
+      )
+
+      Prefs.saveActivitySessionCache(storage, progress)
+      const restored = Prefs.readActivitySessionCache(storage)
+      Assert.equal(restored.get(path).checkedAt, 700)
+      Assert.equal(restored.get(path).changedFilesCount, 1)
+      Assert.equal(
+        Prefs.readActivitySessionCache(memoryStorage()).size,
+        0
+      )
+    })
     test('unavailable storage is optional, not fatal', () => {
       const storage = { getItem() { throw Error('denied') }, setItem() { throw Error('full') } }
       Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs())
@@ -249,6 +321,97 @@ async function main() {
       Assert.equal(final.repositories.get(key('bad')).error, true)
       Assert.equal(final.repositories.get(key('good')).error, false)
       Assert.equal(final.completed, 2)
+    })
+    test('publishes immutable cumulative results as repositories complete', async () => {
+      let unblock
+      const gate = new Promise(resolve => { unblock = resolve })
+      let firstCompletedResolve
+      const firstCompleted = new Promise(resolve => { firstCompletedResolve = resolve })
+      const first = Path.resolve('first')
+      const second = Path.resolve('second')
+      const events = []
+      const monitor = new Monitor(async path => {
+        if (path === second) await gate
+        return snap(path === first ? 1 : 2, path === first ? 100 : 200)
+      }, state => {
+        events.push(state)
+        if (state.checking && state.completed === 1) firstCompletedResolve(state)
+      }, new Map(), 2)
+      monitor.setPaths([first, second])
+      const pending = monitor.refresh()
+      const firstState = await Promise.race([
+        firstCompleted,
+        sleep(100).then(() => undefined),
+      ])
+      unblock()
+      await pending
+      Assert.ok(firstState, 'a completed repository should publish progress')
+      Assert.equal(firstState.repositories.size, 1)
+      Assert.equal(firstState.repositories.get(key(first)).changedFilesCount, 1)
+      const final = events.find(state => !state.checking)
+      Assert.equal(final.repositories.size, 2)
+      Assert.equal(final.repositories.get(key(second)).changedFilesCount, 2)
+      Assert.notEqual(firstState.repositories, final.repositories)
+      Assert.equal(firstState.repositories.has(key(second)), false)
+    })
+    test('fresh successful snapshots are reused while stale, unknown, and failed paths refresh', async () => {
+      const now = 20000
+      const fresh = Path.resolve('fresh')
+      const stale = Path.resolve('stale')
+      const unknown = Path.resolve('unknown')
+      const failed = Path.resolve('failed')
+      const calls = []
+      let final
+      const initial = new Map([
+        [key(fresh), { ...snap(1, 100), checkedAt: now - 1, error: false }],
+        [key(stale), { ...snap(1, 100), checkedAt: now - 15000, error: false }],
+        [key(unknown), { ...snap(1, 100), checkedAt: 0, error: false }],
+        [key(failed), { ...snap(1, 100), checkedAt: now - 1, error: true }],
+      ])
+      const monitor = new Monitor(async path => {
+        calls.push(path)
+        if (path === failed) throw Error('still unavailable')
+        return snap(2, now)
+      }, state => {
+        if (!state.checking) final = state
+      }, initial, 2, () => now)
+
+      monitor.setPaths([fresh, stale, unknown, failed])
+      await monitor.refresh({ maxAge: 15000 })
+
+      Assert.equal(calls.includes(fresh), false)
+      Assert.deepEqual(new Set(calls), new Set([stale, unknown, failed]))
+      Assert.equal(final.repositories.get(key(fresh)).checkedAt, now - 1)
+      Assert.equal(final.repositories.get(key(stale)).checkedAt, now)
+      Assert.equal(final.repositories.get(key(unknown)).checkedAt, now)
+      Assert.equal(final.repositories.get(key(failed)).error, true)
+    })
+    test('fresh cache entries survive path additions while removed entries are pruned', async () => {
+      const now = 30000
+      const keep = Path.resolve('keep')
+      const removed = Path.resolve('removed')
+      const added = Path.resolve('added')
+      const calls = []
+      let final
+      const initial = new Map([
+        [key(keep), { ...snap(1), checkedAt: now - 1, error: false }],
+        [key(removed), { ...snap(1), checkedAt: now - 1, error: false }],
+      ])
+      const monitor = new Monitor(async path => {
+        calls.push(path)
+        return snap(1, now)
+      }, state => {
+        if (!state.checking) final = state
+      }, initial, 2, () => now)
+
+      monitor.setPaths([keep, removed])
+      await monitor.refresh({ maxAge: 15000 })
+      monitor.setPaths([keep, added])
+      await monitor.refresh({ maxAge: 15000 })
+
+      Assert.deepEqual(calls, [added])
+      Assert.deepEqual([...final.repositories.keys()], [key(keep), key(added)])
+      Assert.equal(final.repositories.get(key(keep)).checkedAt, now - 1)
     })
     test('scans are coalesced, deduplicated, and concurrency-limited', async () => {
       let active = 0, peak = 0, calls = 0
