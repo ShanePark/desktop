@@ -6,6 +6,8 @@ import { Repository } from '../../models/repository'
 import { CommittedFileChange } from '../../models/status'
 import { Commit } from '../../models/commit'
 import { IDiff, ImageDiffType } from '../../models/diff'
+import { getCommitDiff } from '../../lib/git/diff'
+import { getFileHistory, IFileHistoryEntry } from '../../lib/git/file-history'
 
 import { encodePathAsUrl } from '../../lib/path'
 import { revealInFileManager } from '../../lib/app-shell'
@@ -38,6 +40,7 @@ import { ExpandableCommitSummary } from './expandable-commit-summary'
 import { DiffHeader } from '../diff/diff-header'
 import { Account } from '../../models/account'
 import { Emoji } from '../../lib/emoji'
+import { FileHistoryPanel } from '../file-history'
 
 interface ISelectedCommitsProps {
   readonly repository: Repository
@@ -91,10 +94,29 @@ interface ISelectedCommitsProps {
   readonly isContiguous: boolean
 
   readonly accounts: ReadonlyArray<Account>
+
+  /**
+   * Called when the user wants to return to the working-directory diff for
+   * the file whose history is open. This is only supplied when that file is
+   * currently dirty.
+   */
+  readonly onReturnToWorkingDirectory?: () => void
+
+  /** The current branch tip, used to discard stale history loads. */
+  readonly headSHA?: string
 }
 
 interface ISelectedCommitsState {
   readonly isExpanded: boolean
+  readonly fileHistoryOpen: boolean
+  readonly fileHistoryFile: CommittedFileChange | null
+  readonly fileHistoryEntries: ReadonlyArray<IFileHistoryEntry>
+  readonly selectedFileHistoryEntry: IFileHistoryEntry | null
+  readonly fileHistoryDiff: IDiff | null
+  readonly fileHistoryDiffError: string | null
+  readonly isLoadingFileHistory: boolean
+  readonly fileHistoryError: string | null
+  readonly fileHistoryHeight: number
 }
 
 /** The History component. Contains the commit list, commit summary, and diff. */
@@ -103,17 +125,35 @@ export class SelectedCommits extends React.Component<
   ISelectedCommitsState
 > {
   private readonly loadChangedFilesScheduler = new ThrottledScheduler(200)
+  private fileHistoryRequestID = 0
+  private fileHistoryDiffWhitespace: boolean | null = null
 
   public constructor(props: ISelectedCommitsProps) {
     super(props)
 
     this.state = {
       isExpanded: false,
+      fileHistoryOpen: false,
+      fileHistoryFile: null,
+      fileHistoryEntries: [],
+      selectedFileHistoryEntry: null,
+      fileHistoryDiff: null,
+      fileHistoryDiffError: null,
+      isLoadingFileHistory: false,
+      fileHistoryError: null,
+      fileHistoryHeight: 240,
     }
   }
 
   private onFileSelected = (file: CommittedFileChange) => {
     this.props.dispatcher.changeFileSelection(this.props.repository, file)
+
+    if (
+      this.state.fileHistoryOpen &&
+      this.state.fileHistoryFile?.id !== file.id
+    ) {
+      this.beginFileHistoryLoad(file)
+    }
   }
 
   private onRowDoubleClick = (row: number) => {
@@ -132,16 +172,243 @@ export class SelectedCommits extends React.Component<
       if (this.state.isExpanded) {
         this.setState({ isExpanded: false })
       }
+
+      if (this.state.fileHistoryOpen) {
+        this.closeFileHistory()
+      }
+    }
+  }
+
+  public componentDidUpdate(prevProps: ISelectedCommitsProps) {
+    if (!this.state.fileHistoryOpen || this.props.selectedFile === null) {
+      return
+    }
+
+    const repositoryChanged =
+      prevProps.repository.hash !== this.props.repository.hash
+    const headChanged = prevProps.headSHA !== this.props.headSHA
+    const fileChanged =
+      prevProps.selectedFile?.id !== this.props.selectedFile.id
+
+    if (repositoryChanged || headChanged || fileChanged) {
+      // A file selection, repository switch, or branch update can happen while
+      // an earlier request is in flight. Re-query so the panel reflects the
+      // new current HEAD rather than merely dropping the stale response.
+      this.beginFileHistoryLoad(this.props.selectedFile)
+      return
+    }
+
+    const selectedHistoryEntry = this.state.selectedFileHistoryEntry
+    if (
+      selectedHistoryEntry !== null &&
+      prevProps.hideWhitespaceInDiff !== this.props.hideWhitespaceInDiff &&
+      this.fileHistoryDiffWhitespace !== this.props.hideWhitespaceInDiff
+    ) {
+      void this.loadFileHistoryDiff(
+        selectedHistoryEntry,
+        this.props.hideWhitespaceInDiff
+      )
     }
   }
 
   public componentWillUnmount() {
     this.loadChangedFilesScheduler.clear()
+    this.fileHistoryRequestID++
+  }
+
+  private isCurrentFileHistoryRequest(
+    requestID: number,
+    repositoryHash: string,
+    path: string,
+    fileID: string,
+    headSHA: string | undefined
+  ) {
+    return (
+      requestID === this.fileHistoryRequestID &&
+      this.state.fileHistoryOpen &&
+      this.state.fileHistoryFile?.id === fileID &&
+      this.state.fileHistoryFile?.path === path &&
+      this.props.repository.hash === repositoryHash &&
+      this.props.headSHA === headSHA
+    )
+  }
+
+  private beginFileHistoryLoad = (file: CommittedFileChange) => {
+    const requestID = ++this.fileHistoryRequestID
+    const repositoryHash = this.props.repository.hash
+    const path = file.path
+    const fileID = file.id
+    const headSHA = this.props.headSHA
+    this.fileHistoryDiffWhitespace = null
+
+    this.setState({
+      fileHistoryOpen: true,
+      fileHistoryFile: file,
+      fileHistoryEntries: [],
+      selectedFileHistoryEntry: null,
+      fileHistoryDiff: null,
+      fileHistoryDiffError: null,
+      isLoadingFileHistory: true,
+      fileHistoryError: null,
+    })
+
+    getFileHistory(this.props.repository, path).then(
+      entries => {
+        if (
+          !this.isCurrentFileHistoryRequest(
+            requestID,
+            repositoryHash,
+            path,
+            fileID,
+            headSHA
+          )
+        ) {
+          return
+        }
+
+        this.setState({
+          fileHistoryEntries: entries,
+          isLoadingFileHistory: false,
+        })
+      },
+      error => {
+        if (
+          !this.isCurrentFileHistoryRequest(
+            requestID,
+            repositoryHash,
+            path,
+            fileID,
+            headSHA
+          )
+        ) {
+          return
+        }
+
+        this.setState({
+          fileHistoryEntries: [],
+          isLoadingFileHistory: false,
+          fileHistoryError:
+            error instanceof Error
+              ? error.message
+              : 'Unable to load file history.',
+        })
+      }
+    )
+  }
+
+  private loadFileHistoryDiff = (
+    entry: IFileHistoryEntry,
+    hideWhitespaceInDiff: boolean
+  ) => {
+    const requestID = ++this.fileHistoryRequestID
+    const repositoryHash = this.props.repository.hash
+    const path = this.state.fileHistoryFile?.path
+    const fileID = this.state.fileHistoryFile?.id
+    const headSHA = this.props.headSHA
+    this.fileHistoryDiffWhitespace = hideWhitespaceInDiff
+
+    if (path === undefined || fileID === undefined) {
+      return Promise.resolve()
+    }
+
+    this.setState({
+      selectedFileHistoryEntry: entry,
+      fileHistoryDiff: null,
+      fileHistoryDiffError: null,
+      isLoadingFileHistory: false,
+      fileHistoryError: null,
+    })
+
+    return getCommitDiff(
+      this.props.repository,
+      entry.file,
+      entry.commit.sha,
+      hideWhitespaceInDiff
+    ).then(
+      diff => {
+        if (
+          !this.isCurrentFileHistoryRequest(
+            requestID,
+            repositoryHash,
+            path,
+            fileID,
+            headSHA
+          ) ||
+          this.state.selectedFileHistoryEntry?.commit.sha !== entry.commit.sha
+        ) {
+          return
+        }
+
+        this.setState({ fileHistoryDiff: diff })
+      },
+      error => {
+        if (
+          !this.isCurrentFileHistoryRequest(
+            requestID,
+            repositoryHash,
+            path,
+            fileID,
+            headSHA
+          ) ||
+          this.state.selectedFileHistoryEntry?.commit.sha !== entry.commit.sha
+        ) {
+          return
+        }
+
+        this.setState({
+          fileHistoryDiffError:
+            error instanceof Error
+              ? error.message
+              : 'Unable to load commit diff.',
+        })
+      }
+    )
+  }
+
+  private closeFileHistory = () => {
+    this.fileHistoryRequestID++
+    this.setState({
+      fileHistoryOpen: false,
+      fileHistoryFile: null,
+      fileHistoryEntries: [],
+      selectedFileHistoryEntry: null,
+      fileHistoryDiff: null,
+      fileHistoryDiffError: null,
+      isLoadingFileHistory: false,
+      fileHistoryError: null,
+    })
+  }
+
+  private onFileHistoryToggle = () => {
+    if (this.state.fileHistoryOpen) {
+      this.closeFileHistory()
+      return
+    }
+
+    if (this.props.selectedFile !== null) {
+      this.beginFileHistoryLoad(this.props.selectedFile)
+    }
+  }
+
+  private onFileHistoryEntrySelected = (entry: IFileHistoryEntry) => {
+    void this.loadFileHistoryDiff(entry, this.props.hideWhitespaceInDiff)
+  }
+
+  private onHistoryHeightChanged = (height: number) => {
+    this.setState({ fileHistoryHeight: height })
+  }
+
+  private onHistoryHeightReset = () => {
+    this.setState({ fileHistoryHeight: 240 })
   }
 
   private renderDiff() {
-    const file = this.props.selectedFile
-    const diff = this.props.currentDiff
+    const selectedHistoryEntry = this.state.selectedFileHistoryEntry
+    const historyFile = this.state.fileHistoryFile
+    const file = selectedHistoryEntry?.file ?? this.props.selectedFile
+    const diff = selectedHistoryEntry
+      ? this.state.fileHistoryDiff
+      : this.props.currentDiff
 
     if (file == null) {
       // don't show both 'empty' messages
@@ -155,46 +422,78 @@ export class SelectedCommits extends React.Component<
       )
     }
 
-    return (
-      <div className="diff-container">
-        {this.renderDiffHeader()}
-        <SeamlessDiffSwitcher
-          repository={this.props.repository}
-          imageDiffType={this.props.selectedDiffType}
-          file={file}
-          diff={diff}
-          readOnly={true}
-          hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
-          showDiffCheckMarks={false}
-          showSideBySideDiff={this.props.showSideBySideDiff}
-          onOpenBinaryFile={this.props.onOpenBinaryFile}
-          onChangeImageDiffType={this.props.onChangeImageDiffType}
-          onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
-          onOpenSubmodule={this.props.onOpenSubmodule}
-        />
-      </div>
+    const diffView = this.renderDiffView(
+      file,
+      diff,
+      selectedHistoryEntry !== null ? this.state.fileHistoryDiffError : null
     )
-  }
 
-  private renderDiffHeader() {
-    const { selectedFile } = this.props
-    if (selectedFile === null) {
-      return null
+    if (this.state.fileHistoryOpen && historyFile !== null) {
+      return (
+        <FileHistoryPanel
+          repository={this.props.repository}
+          path={historyFile.path}
+          entries={this.state.fileHistoryEntries}
+          selectedEntry={selectedHistoryEntry}
+          isLoading={this.state.isLoadingFileHistory}
+          errorMessage={this.state.fileHistoryError}
+          historyHeight={this.state.fileHistoryHeight}
+          onHistoryHeightChanged={this.onHistoryHeightChanged}
+          onHistoryHeightReset={this.onHistoryHeightReset}
+          onEntrySelected={this.onFileHistoryEntrySelected}
+          onReturnToWorkingDirectory={this.props.onReturnToWorkingDirectory}
+          emoji={this.props.emoji}
+          accounts={this.props.accounts}
+          localCommitSHAs={this.props.localCommitSHAs}
+        >
+          {diffView}
+        </FileHistoryPanel>
+      )
     }
 
-    const { path, status } = selectedFile
+    return diffView
+  }
 
+  private renderDiffView(
+    file: CommittedFileChange,
+    diff: IDiff | null,
+    diffError: string | null
+  ) {
     return (
-      <DiffHeader
-        diff={this.props.currentDiff}
-        path={path}
-        status={status}
-        showSideBySideDiff={this.props.showSideBySideDiff}
-        onShowSideBySideDiffChanged={this.onShowSideBySideDiffChanged}
-        hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
-        onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
-        onDiffOptionsOpened={this.props.onDiffOptionsOpened}
-      />
+      <div className="diff-container">
+        <DiffHeader
+          diff={diff}
+          path={file.path}
+          status={file.status}
+          showSideBySideDiff={this.props.showSideBySideDiff}
+          onShowSideBySideDiffChanged={this.onShowSideBySideDiffChanged}
+          hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
+          onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
+          onDiffOptionsOpened={this.props.onDiffOptionsOpened}
+          fileHistoryOpen={this.state.fileHistoryOpen}
+          onFileHistoryToggle={this.onFileHistoryToggle}
+        />
+        {diffError !== null ? (
+          <div className="file-history-error" role="alert">
+            {diffError}
+          </div>
+        ) : (
+          <SeamlessDiffSwitcher
+            repository={this.props.repository}
+            imageDiffType={this.props.selectedDiffType}
+            file={file}
+            diff={diff}
+            readOnly={true}
+            hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
+            showDiffCheckMarks={false}
+            showSideBySideDiff={this.props.showSideBySideDiff}
+            onOpenBinaryFile={this.props.onOpenBinaryFile}
+            onChangeImageDiffType={this.props.onChangeImageDiffType}
+            onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
+            onOpenSubmodule={this.props.onOpenSubmodule}
+          />
+        )}
+      </div>
     )
   }
 
@@ -231,10 +530,23 @@ export class SelectedCommits extends React.Component<
   }
 
   private onHideWhitespaceInDiffChanged = (hideWhitespaceInDiff: boolean) => {
+    const selectedHistoryEntry = this.state.selectedFileHistoryEntry
+
+    if (selectedHistoryEntry !== null) {
+      // Keep the application preference in sync while loading the selected
+      // historical diff locally. The regular history selection is unrelated
+      // to this entry, so passing null avoids replacing it in the store.
+      return this.props.dispatcher.onHideWhitespaceInHistoryDiffChanged(
+        hideWhitespaceInDiff,
+        this.props.repository,
+        null
+      )
+    }
+
     return this.props.dispatcher.onHideWhitespaceInHistoryDiffChanged(
       hideWhitespaceInDiff,
       this.props.repository,
-      this.props.selectedFile as CommittedFileChange
+      this.props.selectedFile
     )
   }
 
@@ -292,6 +604,11 @@ export class SelectedCommits extends React.Component<
   private onOpenItem = (path: string) => {
     const fullPath = Path.join(this.props.repository.path, path)
     openFile(fullPath, this.props.dispatcher)
+  }
+
+  private onViewFileHistory = (file: CommittedFileChange) => {
+    this.props.dispatcher.changeFileSelection(this.props.repository, file)
+    this.beginFileHistoryLoad(file)
   }
 
   public render() {
@@ -386,6 +703,11 @@ export class SelectedCommits extends React.Component<
     if (!fileExistsOnDisk) {
       showContextualMenu([
         {
+          label: 'View file history',
+          action: () => this.onViewFileHistory(file),
+        },
+        { type: 'separator' },
+        {
           label: __DARWIN__
             ? 'File Does Not Exist on Disk'
             : 'File does not exist on disk',
@@ -403,6 +725,11 @@ export class SelectedCommits extends React.Component<
       : DefaultEditorLabel
 
     const items: IMenuItem[] = [
+      {
+        label: 'View file history',
+        action: () => this.onViewFileHistory(file),
+      },
+      { type: 'separator' },
       {
         label: RevealInFileManagerLabel,
         action: () => revealInFileManager(repository, file.path),

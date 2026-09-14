@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Repository } from '../models/repository'
 import { Commit, CommitOneLine } from '../models/commit'
 import { TipState } from '../models/tip'
+import { AppFileStatusKind } from '../models/status'
 import { UiView } from './ui-view'
 import { Changes, ChangesSidebar } from './changes'
 import { NoChanges } from './changes/no-changes'
@@ -494,6 +495,12 @@ export class RepositoryView extends React.Component<
 
     return (
       <SelectedCommits
+        headSHA={this.fileHistoryHeadSHA}
+        onReturnToWorkingDirectory={
+          this.currentHistoryDirtyFile === undefined
+            ? undefined
+            : this.onReturnToWorkingDirectory
+        }
         repository={this.props.repository}
         dispatcher={this.props.dispatcher}
         selectedCommits={selectedCommits}
@@ -523,6 +530,41 @@ export class RepositoryView extends React.Component<
 
   private onDiffOptionsOpened = () => {
     this.props.dispatcher.incrementMetric('diffOptionsViewedCount')
+  }
+
+  private get fileHistoryHeadSHA(): string | undefined {
+    const { tip } = this.props.state.branchesState
+    return tip.kind === TipState.Valid
+      ? tip.branch.tip.sha
+      : tip.kind === TipState.Detached
+      ? tip.currentSha
+      : undefined
+  }
+
+  private get currentHistoryDirtyFile() {
+    const { file } = this.props.state.commitSelection
+    return file === null
+      ? undefined
+      : this.props.state.changesState.workingDirectory.files.find(
+          candidate =>
+            candidate.path === file.path ||
+            (candidate.status.kind === AppFileStatusKind.Renamed &&
+              candidate.status.oldPath === file.path)
+        )
+  }
+
+  private onReturnToWorkingDirectory = () => {
+    const file = this.currentHistoryDirtyFile
+    if (file === undefined) {
+      return
+    }
+    this.props.dispatcher.selectWorkingDirectoryFiles(this.props.repository, [
+      file,
+    ])
+    this.props.dispatcher.changeRepositorySection(
+      this.props.repository,
+      RepositorySectionTab.Changes
+    )
   }
 
   private onTutorialCompletionAnnounced = () => {
@@ -597,6 +639,11 @@ export class RepositoryView extends React.Component<
 
       return (
         <Changes
+          headSHA={this.fileHistoryHeadSHA}
+          emoji={this.props.emoji}
+          accounts={this.props.accounts}
+          preferAbsoluteDates={this.props.preferAbsoluteDates}
+          localCommitSHAs={this.props.state.localCommitSHAs}
           repository={this.props.repository}
           dispatcher={this.props.dispatcher}
           file={selectedFile}

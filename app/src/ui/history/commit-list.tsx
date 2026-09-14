@@ -156,6 +156,9 @@ interface ICommitListProps {
   /** Whether or not commits in this list can be reordered. */
   readonly reorderingEnabled?: boolean
 
+  /** The selection behavior for the list. Defaults to multi-select. */
+  readonly selectionMode?: 'single' | 'range' | 'multi'
+
   /** Whether a multi commit operation is in progress (in particular the
    * conflicts resolution step allows interaction with history) */
   readonly isMultiCommitOperationInProgress?: boolean
@@ -601,7 +604,7 @@ export class CommitList extends React.Component<
           onCancelKeyboardInsertion={this.props.onCancelKeyboardReorder}
           onConfirmKeyboardInsertion={this.onConfirmKeyboardReorder}
           onRowContextMenu={this.onRowContextMenu}
-          selectionMode="multi"
+          selectionMode={this.props.selectionMode ?? 'multi'}
           onScroll={this.onScroll}
           keyboardInsertionData={this.props.keyboardReorderData}
           keyboardInsertionElementRenderer={this.renderKeyboardInsertionElement}

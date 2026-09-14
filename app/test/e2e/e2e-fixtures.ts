@@ -152,18 +152,26 @@ export async function dismissMoveToApplicationsDialog(page: Page) {
 // ── Fixtures ────────────────────────────────────────────────────────
 
 type E2EFixtures = {
+  prepareRepository: () => void
   app: ElectronApplication
   mainWindow: Page
   mockServer: IMockUpdateServer
 }
 
 export const test = base.extend<{}, E2EFixtures>({
+  prepareRepository: [
+    async ({}, use) => {
+      await use(ensureSmokeTestRepository)
+    },
+    { scope: 'worker' },
+  ],
+
   // Worker-scoped: one Electron app per test file.
   // Depends on mockServer so the update server is ready before launch.
   app: [
-    async ({ mockServer }, use) => {
+    async ({ mockServer, prepareRepository }, use) => {
       // Setup directories
-      ensureSmokeTestRepository()
+      prepareRepository()
 
       const launchOptions = getE2ELaunchOptions()
 

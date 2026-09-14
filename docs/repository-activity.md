@@ -126,6 +126,36 @@ itself to monitor its files independently.
 
 ## Verification
 
+### File history in the diff pane
+
+Select one file in Changes and use **File history** immediately left of Diff
+Options. The commit list opens below the diff, keeping the file header in place.
+Select a commit to view that file's read-only diff, or select the **Dirty** row
+at the top of the list to return to the working copy. Closing the panel also
+restores the original diff.
+
+In History, right-click a changed file and choose **View file history**. This
+also works for files with no current changes. If the file is currently dirty,
+the **Dirty** row opens it in Changes.
+
+History uses commits reachable from the current HEAD, including merged
+branches, and follows renames detected by Git. Each commit uses its historical
+file path; merge diffs compare against the first parent. The list is loaded on
+demand. Drag the divider above the history list to resize it, double-click it
+to reset, or focus it and use Up/Down or Home/End. The upper diff keeps a minimum
+height.
+
+Focused verification:
+
+```sh
+node script/test.mjs app/test/unit/git/file-history-test.ts app/test/unit/ui/file-history-panel-test.tsx app/test/unit/ui/vertical-resizable-test.tsx
+node script/test.mjs app/test/unit/ui/changes-file-history-test.tsx
+```
+
+The focused Electron test in `app/test/e2e/file-history.e2e.ts` covers the fixed
+header, Dirty transitions, divider dragging, and the context menu for a clean
+file using an isolated temporary repository.
+
 ### Local development with the Dock icon
 
 Run `yarn build:local` after a set of UI changes is ready to review. This builds

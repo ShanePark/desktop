@@ -926,6 +926,32 @@
       flex-shrink: 0;
     }
 
+    .file-history-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: var(--button-height);
+      height: var(--button-height);
+      margin-right: var(--spacing-half);
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: var(--button-border-radius);
+      color: var(--text-secondary-color);
+      background: transparent;
+
+      &:hover,
+      &[aria-expanded='true'] {
+        border-color: var(--secondary-button-hover-border-color);
+        color: var(--text-color);
+        background: var(--secondary-button-hover-background);
+      }
+
+      &:focus {
+        outline-offset: 2px;
+      }
+    }
+
     .octicon.status {
       flex-shrink: 0;
       vertical-align: text-bottom;

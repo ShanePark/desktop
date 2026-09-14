@@ -5,6 +5,8 @@ import { IDiff, DiffType } from '../../models/diff'
 import { Octicon, iconForStatus } from '../octicons'
 import { mapStatus } from '../../lib/status'
 import { DiffOptions } from './diff-options'
+import * as octicons from '../octicons/octicons.generated'
+import { Button } from '../lib/button'
 
 interface IDiffHeaderProps {
   readonly path: string
@@ -25,6 +27,12 @@ interface IDiffHeaderProps {
 
   /** Called when the user opens the diff options popover */
   readonly onDiffOptionsOpened: () => void
+
+  /** Whether the file history panel is currently visible. */
+  readonly fileHistoryOpen?: boolean
+
+  /** Called when the file history panel should be toggled. */
+  readonly onFileHistoryToggle?: () => void
 }
 
 /** Displays information about a file */
@@ -37,6 +45,7 @@ export class DiffHeader extends React.Component<IDiffHeaderProps, {}> {
       <div className="header">
         <PathLabel path={this.props.path} status={this.props.status} />
 
+        {this.renderFileHistoryToggle()}
         {this.renderDiffOptions()}
 
         <Octicon
@@ -45,6 +54,25 @@ export class DiffHeader extends React.Component<IDiffHeaderProps, {}> {
           title={fileStatus}
         />
       </div>
+    )
+  }
+
+  private renderFileHistoryToggle() {
+    if (this.props.onFileHistoryToggle === undefined) {
+      return null
+    }
+
+    const label = 'File history'
+    return (
+      <Button
+        className="file-history-toggle"
+        ariaLabel={label}
+        ariaExpanded={this.props.fileHistoryOpen === true}
+        tooltip={label}
+        onClick={this.props.onFileHistoryToggle}
+      >
+        <Octicon symbol={octicons.history} />
+      </Button>
     )
   }
 
