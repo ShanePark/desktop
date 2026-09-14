@@ -70,13 +70,14 @@ old are reused instead of launching another Git check. This is polling, not
 continuous monitoring while the picker is closed. An already started pass may
 finish after focus is lost. Closing the picker cancels queued work and suppresses
 late UI callbacks; at most two already running Git commands finish within their timeout.
-Completed repository checks update the list immediately, without waiting for
-the remaining repositories in the pass. These results stay in memory when
-the picker closes, including results from an unfinished pass. Reopening the
-picker immediately shows the last known Working list while outdated results
-are refreshed. Before a disk-cached result is verified after app startup,
-or when a check fails, Working uses the same available change and unpushed
-counts as the repository row indicators.
+Completed repository checks whose activity or error state changed update the
+list immediately, without waiting for the remaining repositories in the pass;
+unchanged checks update the cache and `checkedAt` without an intermediate list
+update. These results stay in memory when the picker closes, including results
+from an unfinished pass. Reopening the picker immediately shows the last known
+Working list while outdated results are refreshed. Before a disk-cached result
+is verified after app startup, or when a check fails, Working uses the same
+available change and unpushed counts as the repository row indicators.
 
 The scanner uses bundled Git with porcelain v1 NUL-separated output, optional
 index locking disabled, and fsmonitor hooks disabled for this read. It launches
@@ -175,7 +176,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 50 repository activity checks, 27 UI wiring
+The direct runners currently cover 51 repository activity checks, 28 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.

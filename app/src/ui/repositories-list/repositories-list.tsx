@@ -40,6 +40,7 @@ import {
   saveActivityCache,
 } from '../../lib/repository-activity/preferences'
 import { activityKey } from '../../lib/repository-activity/status'
+import type { IRepositoryActivity } from '../../lib/repository-activity/status'
 import { projectActivityGroups } from '../../lib/repository-activity/list'
 import {
   IRepositoryOrganization,
@@ -159,6 +160,39 @@ function findMatchingListItem(
   return null
 }
 
+function activityDisplayChanged(
+  previous: IRepositoryActivity | undefined,
+  next: IRepositoryActivity | undefined
+): boolean {
+  if (previous === undefined || next === undefined) {
+    return previous !== next
+  }
+  return (
+    previous.changedFilesCount !== next.changedFilesCount ||
+    previous.lastChangedAt !== next.lastChangedAt ||
+    (previous.lastCommitAt ?? null) !== (next.lastCommitAt ?? null) ||
+    (previous.unpushedCount ?? 0) !== (next.unpushedCount ?? 0) ||
+    previous.error !== next.error ||
+    (previous.checkedAt === 0) !== (next.checkedAt === 0)
+  )
+}
+
+function activityMapDisplayChanged(
+  previous: ReadonlyMap<string, IRepositoryActivity>,
+  next: ReadonlyMap<string, IRepositoryActivity>
+): boolean {
+  if (previous.size !== next.size) {
+    return true
+  }
+  const keys = new Set([...previous.keys(), ...next.keys()])
+  for (const key of keys) {
+    if (activityDisplayChanged(previous.get(key), next.get(key))) {
+      return true
+    }
+  }
+  return false
+}
+
 /** The list of user-added repositories. */
 export class RepositoriesList extends React.Component<
   IRepositoriesListProps,
@@ -173,6 +207,7 @@ export class RepositoriesList extends React.Component<
   private groupDragImage: HTMLDivElement | null = null
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
+  private lastRenderedActivity: IActivityState
 
   /**
    * A memoized function for grouping repositories for display
@@ -225,6 +260,7 @@ export class RepositoriesList extends React.Component<
         total: 0,
       },
     }
+    this.lastRenderedActivity = this.state.activity
     this.activityMonitor = new RepositoryActivityMonitor(
       readRepositoryActivity,
       activity => {
@@ -232,7 +268,16 @@ export class RepositoriesList extends React.Component<
         if (!activity.checking) {
           saveActivityCache(localStorage, activity.repositories)
         }
-        this.setState({ activity })
+        if (
+          activityMapDisplayChanged(
+            this.lastRenderedActivity.repositories,
+            activity.repositories
+          ) ||
+          (!activity.checking && this.lastRenderedActivity.checking)
+        ) {
+          this.lastRenderedActivity = activity
+          this.setState({ activity })
+        }
       },
       initialActivity
     )

@@ -102,13 +102,14 @@ export class RepositoryActivityMonitor {
             completed++
             continue
           }
+          let activity: IRepositoryActivity
           try {
             const sample = await this.sample(path)
-            results.set(key, advanceActivity(previous, sample, this.now()))
+            activity = advanceActivity(previous, sample, this.now())
           } catch {
             // An unavailable repository is not a clean repository. Preserve its
             // last known activity, but expose the failure to the view.
-            results.set(key, {
+            activity = {
               lastCommitAt: previous?.lastCommitAt,
               unpushedCount: previous?.unpushedCount,
               changedFilesCount: previous?.changedFilesCount ?? 0,
@@ -117,11 +118,16 @@ export class RepositoryActivityMonitor {
               lastChangedAt: previous?.lastChangedAt ?? null,
               checkedAt: this.now(),
               error: true,
-            })
+            }
           }
+          results.set(key, activity)
           completed++
-          if (!this.stopped && generation === this.generation) {
-            // Publish a snapshot so completed repositories can move to Working
+          if (
+            !this.stopped &&
+            generation === this.generation &&
+            this.hasMeaningfulChange(previous, activity)
+          ) {
+            // Publish a snapshot so changed repositories can move to Working
             // without exposing a map that later completions will mutate.
             this.changed({
               repositories: new Map(results),
@@ -150,6 +156,22 @@ export class RepositoryActivityMonitor {
       })
       return
     }
+  }
+
+  private hasMeaningfulChange(
+    previous: IRepositoryActivity | undefined,
+    next: IRepositoryActivity
+  ): boolean {
+    return (
+      previous === undefined ||
+      previous.changedFilesCount !== next.changedFilesCount ||
+      previous.fingerprint !== next.fingerprint ||
+      previous.fileModifiedAt !== next.fileModifiedAt ||
+      previous.lastChangedAt !== next.lastChangedAt ||
+      (previous.lastCommitAt ?? null) !== (next.lastCommitAt ?? null) ||
+      (previous.unpushedCount ?? 0) !== (next.unpushedCount ?? 0) ||
+      previous.error !== next.error
+    )
   }
 
   private isFresh(

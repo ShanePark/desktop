@@ -443,12 +443,38 @@ async function main() {
       Assert.deepEqual(calls, ['old', 'new'])
       Assert.deepEqual([...final.repositories.keys()], [key('new')])
     })
-    test('polling unchanged repositories never advances their recency', async () => {
+    test('unchanged polls only publish lifecycle events and retain freshness', async () => {
       let final, clock = 1000
-      const monitor = new Monitor(async () => snap(1, 100), s => { final = s }, new Map(), 2, () => clock)
+      const events = []
+      const monitor = new Monitor(async () => snap(1, 100), s => { final = s; events.push(s) }, new Map(), 2, () => clock)
       monitor.setPaths([Path.resolve('a')]); await monitor.refresh()
+      events.length = 0
       clock = 2000; await monitor.refresh()
       Assert.equal(final.repositories.get(key('a')).lastChangedAt, 100)
+      Assert.deepEqual(events.map(event => [event.checking, event.completed]), [
+        [true, 0], [false, 1],
+      ])
+      Assert.equal(final.repositories.get(key('a')).checkedAt, 2000)
+    })
+    test('only changed repository completions publish intermediate snapshots', async () => {
+      const unchanged = Path.resolve('unchanged')
+      const changed = Path.resolve('changed')
+      const initial = new Map([
+        [key(unchanged), snap(1, 100)],
+        [key(changed), snap(1, 100)],
+      ])
+      const events = []
+      const monitor = new Monitor(
+        async path => path === unchanged ? snap(1, 100) : snap(2, 200),
+        state => events.push(state),
+        initial,
+        1,
+        () => 2000
+      )
+      monitor.setPaths([unchanged, changed]); await monitor.refresh()
+      Assert.deepEqual(events.map(event => [event.checking, event.completed]), [
+        [true, 0], [true, 2], [false, 2],
+      ])
     })
     test('invalid scan concurrency is rejected', () => {
       for (const limit of [0, -1, 9, 1.5]) Assert.throws(() => new Monitor(async () => snap(0), () => {}, new Map(), limit))

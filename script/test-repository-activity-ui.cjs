@@ -129,6 +129,20 @@ test('picker opts into recent-local-change ordering and renders compact options'
   const postFilter = listElement().props.renderPostFilter()
   Assert.equal(postFilter.props.children.length, 2)
 })
+test('activity checks avoid UI updates when only checkedAt changes', () => {
+  const activityList = new RepositoriesList(props)
+  let updates = 0
+  const setState = activityList.setState.bind(activityList)
+  activityList.setState = update => { updates++; return setState(update) }
+  const path = activityKey(repositories[0].path)
+  const changed = new Map([[path, snapshot(1)]])
+  activityList.activityMonitor.notify({ repositories: changed, checking: true, completed: 1, total: 2 })
+  activityList.activityMonitor.notify({ repositories: changed, checking: false, completed: 1, total: 2 })
+  const refreshed = new Map([[path, { ...snapshot(1), checkedAt: 2000 }]])
+  activityList.activityMonitor.notify({ repositories: refreshed, checking: true, completed: 1, total: 2 })
+  activityList.activityMonitor.notify({ repositories: refreshed, checking: false, completed: 1, total: 2 })
+  Assert.equal(updates, 2)
+})
 test('mount scans every registered repository despite active filters', () => {
   picker.props = { ...props, filterText: 'z-project' }
   picker.onActivityPreferencesChanged({ sort: 'recent', onlyUncommitted: true })
