@@ -12,7 +12,7 @@ const run = promisify(execFile)
 describe('repository activity', () => {
   const runners = [
     ['test-repository-activity.cjs', '51/51 tests passed'],
-    ['test-repository-activity-ui.cjs', '28/28 UI wiring tests passed'],
+    ['test-repository-activity-ui.cjs', '30/30 UI wiring tests passed'],
     ['test-repository-groups.cjs', '10/10 repository group tests passed'],
   ] as const
 

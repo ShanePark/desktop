@@ -193,8 +193,9 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   if (organization === undefined) {
     return [{ identifier: activityGroup, items: annotated }]
   }
-  // Each repository appears once. Working takes precedence over its saved
-  // group, which remains assigned when it becomes clean and pushed again.
+  // Working is a derived view. Keep a Working copy for active repositories,
+  // while retaining every repository in its saved group so activity changes
+  // do not make rows jump between sections.
   const working = new Set(
     annotated
       .filter(
@@ -212,45 +213,31 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   ])
   for (const row of annotated) {
     const assigned = organization.assignments[organizationPath(row)]
-    const target = working.has(row.repository.id)
-      ? WorkingGroup
-      : assigned && buckets.has(assigned)
-      ? assigned
-      : Ungrouped
-    buckets.get(target)!.push({
-      ...row,
-      workingGroupName:
-        target === WorkingGroup
-          ? organization.groups.find(g => g.id === assigned)?.name ??
-            'Ungrouped'
-          : undefined,
-    })
+    const target =
+      assigned && buckets.has(assigned) ? assigned : Ungrouped
+    buckets.get(target)!.push(row)
+    if (working.has(row.repository.id)) {
+      buckets.get(WorkingGroup)!.push({
+        ...row,
+        workingGroupName:
+          organization.groups.find(g => g.id === assigned)?.name ??
+          'Ungrouped',
+      })
+    }
   }
-  const ranks = new Map(
-    (organization.repositoryOrder ?? []).map((path, index) => [
-      activityKey(path),
-      index,
-    ])
-  )
+  // `annotated` is already ordered by the selected activity filter. Keep that
+  // order while assigning rows to their saved groups so every section follows
+  // the same sort order.
   return [...buckets].map(([identifier, items]) => ({
     identifier: identifier as G,
     items:
       identifier === WorkingGroup
         ? items
-        : families(items)
-            .sort(
-              (a, b) =>
-                (ranks.get(organizationPath(a[0])) ?? Number.MAX_SAFE_INTEGER) -
-                  (ranks.get(organizationPath(b[0])) ??
-                    Number.MAX_SAFE_INTEGER) || compareNames(a[0], b[0])
-            )
-            .flatMap(block => {
-              const root = block.find(row => row.worktree?.type !== 'linked')
-              const children = block
-                .filter(row => row !== root)
-                .sort(compareNames)
-              return root ? [root, ...children] : children
-            }),
+        : families(items).flatMap(block => {
+            const root = block.find(row => row.worktree?.type !== 'linked')
+            const children = block.filter(row => row !== root)
+            return root ? [root, ...children] : children
+          }),
   }))
 }
 

@@ -49,7 +49,6 @@ import {
   assignRepository,
   removeRepositoryGroup,
   moveRepositoryGroup,
-  moveRepository,
   toggleRepositoryGroup,
   repositoryOrganizationPath,
   WorkingGroup,
@@ -128,8 +127,9 @@ interface IRepositoriesListState {
   readonly activityPreferences: IActivityPreferences
   readonly organization: IRepositoryOrganization
   readonly groupError: string | null
+  /** The repository currently being dragged, including its Working copy. */
+  readonly draggedRepositoryId: number | null
   readonly dropPosition: 'before' | 'after' | null
-  readonly dropRepository?: number | null
   readonly dropGroup: string | null
   readonly newRepositoryMenuExpanded: boolean
 }
@@ -204,6 +204,7 @@ export class RepositoriesList extends React.Component<
   private draggedGroup: string | null = null
   private dropSlot: IRepositoryDropSlot | null = null
   private dragList: HTMLDivElement | null = null
+  private repositoryListElement: HTMLDivElement | null = null
   private groupDragImage: HTMLDivElement | null = null
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
@@ -249,6 +250,7 @@ export class RepositoriesList extends React.Component<
       selectedItem: null,
       organization: readRepositoryOrganization(localStorage),
       groupError: null,
+      draggedRepositoryId: null,
       dropGroup: null,
       dropPosition: null,
       newRepositoryMenuExpanded: false,
@@ -288,6 +290,7 @@ export class RepositoriesList extends React.Component<
     this.refreshActivity()
     window.addEventListener('focus', this.refreshActivity)
     window.addEventListener(RepositoryGroupsChangedEvent, this.onGroupsChanged)
+    document.addEventListener('dragover', this.onDocumentDragOver, true)
     document.addEventListener('visibilitychange', this.refreshVisibleActivity)
     this.activityTimer = window.setInterval(this.refreshVisibleActivity, 15000)
   }
@@ -313,6 +316,7 @@ export class RepositoriesList extends React.Component<
       RepositoryGroupsChangedEvent,
       this.onGroupsChanged
     )
+    document.removeEventListener('dragover', this.onDocumentDragOver, true)
     document.removeEventListener(
       'visibilitychange',
       this.refreshVisibleActivity
@@ -376,25 +380,21 @@ export class RepositoriesList extends React.Component<
 
   private renderItem = (item: IRepositoryListItem, matches: IMatches) => {
     const repository = item.repository
+    const ownerGroup =
+      item.workingGroupName !== undefined
+        ? WorkingGroup
+        : this.state.organization.assignments[
+            repositoryOrganizationKey(repository)
+          ] ?? Ungrouped
     return (
       <div
-        key={repository.id}
-        className={`repository-activity-row ${
-          this.state.dropRepository === repository.id
-            ? `repository-insert-${this.state.dropPosition}`
-            : ''
-        }`}
+        key={item.id}
+        className="repository-activity-row"
         data-repository-id={repository.id}
+        data-item-id={item.id}
         data-working={item.workingGroupName !== undefined}
-        data-owner-group={
-          item.workingGroupName !== undefined
-            ? WorkingGroup
-            : this.state.organization.assignments[
-                repositoryOrganizationKey(repository)
-              ] ?? Ungrouped
-        }
+        data-owner-group={ownerGroup}
         onDragOver={this.onRepositoryDragOver}
-        onDragLeave={this.onGroupDragLeave}
         onDrop={this.onRepositoryDrop}
         draggable={repository instanceof Repository}
         onDragStart={this.onRepositoryDragStart}
@@ -560,19 +560,19 @@ export class RepositoriesList extends React.Component<
       group => group.id === id
     )
     const canDrop = id !== WorkingGroup
+    const dropPreviewClass =
+      this.draggedGroup !== null && this.state.dropGroup === id
+        ? this.state.dropPosition
+          ? ` group-insert-${this.state.dropPosition}`
+          : ' drop-target'
+        : ''
 
     return (
       <div
         key={id}
         className={`filter-list-group-header${
           isCustomGroup ? ' repository-custom-group' : ''
-        } ${
-          this.state.dropGroup === id
-            ? this.state.dropPosition
-              ? `group-insert-${this.state.dropPosition}`
-              : 'drop-target'
-            : ''
-        }`}
+        }${dropPreviewClass}`}
         role="group"
         aria-label={
           canDrop
@@ -646,66 +646,180 @@ export class RepositoriesList extends React.Component<
     if (!this.props.repositories.some(r => r.id === id)) {
       return
     }
+    this.clearDropTarget()
     this.draggedRepository = id
+    this.draggedGroup = null
+    this.setState({ draggedRepositoryId: id })
     event.dataTransfer.setData('application/x-desktop-repository', String(id))
     event.dataTransfer.effectAllowed = 'move'
   }
 
-  private onRepositoryDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    const id = Number(event.currentTarget.dataset.repositoryId)
-    if (
-      this.draggedRepository === null ||
-      this.draggedRepository === id ||
-      event.currentTarget.dataset.working === 'true'
-    ) {
-      return
+  private getRepositoryGroup = (repository: Repositoryish) =>
+    this.state.organization.assignments[
+      repositoryOrganizationKey(repository)
+    ] ?? Ungrouped
+
+  private isRepositoryDragActive = () =>
+    this.draggedRepository !== null || this.state.draggedRepositoryId !== null
+
+  private getRepositoryItemClassName = (item: IRepositoryListItem) => {
+    const isDraggedRepository =
+      this.isRepositoryDragActive() &&
+      (this.draggedRepository === item.repository.id ||
+        this.state.draggedRepositoryId === item.repository.id)
+    // The saved group is dimmed as a whole. Keep a row-level affordance only
+    // for the derived Working copy, which has no saved group container.
+    return isDraggedRepository && item.workingGroupName !== undefined
+      ? 'repository-drag-source'
+      : undefined
+  }
+
+  private getDraggedRepositoryGroup = () => {
+    const id = this.draggedRepository ?? this.state.draggedRepositoryId
+    if (id === null) {
+      return null
     }
-    event.preventDefault()
-    event.stopPropagation()
-    event.dataTransfer.dropEffect = 'move'
-    const rect = event.currentTarget.getBoundingClientRect()
-    const dropPosition =
-      event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+
+    const repository = this.props.repositories.find(
+      candidate => candidate.id === id
+    )
+    return repository === undefined ? null : this.getRepositoryGroup(repository)
+  }
+
+  private getRepositoryGroupSectionClassName = (
+    identifier: RepositoryGroupIdentifier
+  ) => {
+    if (!this.isRepositoryDragActive()) {
+      return undefined
+    }
+
+    const id = this.getGroupIdentifierKey(identifier)
+    const classNames = new Array<string>()
+    const sourceGroup = this.getDraggedRepositoryGroup()
     if (
-      this.state.dropRepository !== id ||
-      this.state.dropPosition !== dropPosition
+      sourceGroup !== null &&
+      sourceGroup !== WorkingGroup &&
+      sourceGroup === id
     ) {
-      this.setState({ dropRepository: id, dropPosition, dropGroup: null })
+      classNames.push('repository-drag-source-group')
+    }
+    if (this.state.dropGroup === id) {
+      classNames.push('repository-drop-group-section')
+    }
+
+    return classNames.length > 0 ? classNames.join(' ') : undefined
+  }
+
+  private getRepositoryDragGroupFromTarget = (
+    target: EventTarget | null
+  ): string | null => {
+    if (
+      target === null ||
+      typeof target !== 'object' ||
+      typeof (target as Element).closest !== 'function'
+    ) {
+      return null
+    }
+
+    const element = target as Element
+    const row = element.closest<HTMLElement>('.repository-activity-row')
+    const rowGroup = row?.dataset.ownerGroup
+    if (rowGroup !== undefined) {
+      return rowGroup
+    }
+
+    const header = element.closest<HTMLElement>(
+      '.filter-list-group-header[data-group]'
+    )
+    const headerGroup = header?.dataset.group
+    if (headerGroup !== undefined) {
+      return headerGroup
+    }
+
+    const section = element.closest<HTMLElement>(
+      '.ReactVirtualized__Grid[data-group]'
+    )
+    return section?.dataset.group ?? null
+  }
+
+  private clearDropTarget = () => {
+    if (this.state.dropGroup !== null || this.state.dropPosition !== null) {
+      this.setState({
+        dropGroup: null,
+        dropPosition: null,
+      })
     }
   }
 
-  private onRepositoryDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
+  private updateRepositoryDropGroup = (
+    event: React.DragEvent<HTMLDivElement>,
+    group: string | null | undefined
+  ) => {
+    if (this.draggedRepository === null) {
+      return
+    }
+
+    // Keep this handler authoritative for the whole list. Stopping propagation
+    // prevents row and header drag handlers from racing it while the pointer
+    // moves between descendants of the same section.
     event.stopPropagation()
+
+    const source = this.props.repositories.find(
+      repository => repository.id === this.draggedRepository
+    )
+    if (
+      source === undefined ||
+      group === null ||
+      group === undefined ||
+      group === WorkingGroup ||
+      this.getRepositoryGroup(source) === group
+    ) {
+      event.dataTransfer.dropEffect = 'none'
+      this.clearDropTarget()
+      return
+    }
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    if (this.state.dropGroup !== group || this.state.dropPosition !== null) {
+      this.setState({
+        dropGroup: group,
+        dropPosition: null,
+      })
+    }
+  }
+
+  private onRepositoryDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (this.draggedRepository === null) {
+      return
+    }
+    const group = event.currentTarget.dataset.ownerGroup
+    this.updateRepositoryDropGroup(event, group)
+  }
+
+  private onRepositoryDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (this.draggedRepository === null) {
+      return
+    }
     const source = this.props.repositories.find(
       r => r.id === this.draggedRepository
     )
     const target = this.props.repositories.find(
       r => r.id === Number(event.currentTarget.dataset.repositoryId)
     )
-    if (source && target && event.currentTarget.dataset.working !== 'true') {
-      const rect = event.currentTarget.getBoundingClientRect()
-      const group =
-        this.state.organization.assignments[
-          repositoryOrganizationKey(target)
-        ] ?? Ungrouped
-      const fallback = [...this.props.repositories]
-        .sort(
-          (a, b) =>
-            a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
-            a.path.localeCompare(b.path)
-        )
-        .map(repositoryOrganizationKey)
-      this.updateOrganization(
-        moveRepository(
-          this.state.organization,
-          repositoryOrganizationKey(source),
-          repositoryOrganizationKey(target),
-          group,
-          event.clientY < rect.top + rect.height / 2 ? 'before' : 'after',
-          fallback
-        )
-      )
+    const group = event.currentTarget.dataset.ownerGroup
+    if (
+      source &&
+      target &&
+      group &&
+      group !== WorkingGroup &&
+      source.id !== target.id &&
+      event.currentTarget.dataset.working !== 'true' &&
+      this.getRepositoryGroup(source) !== group
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.assignGroup(repositoryOrganizationKey(source), group)
     }
     this.onRepositoryDragEnd()
   }
@@ -718,16 +832,21 @@ export class RepositoriesList extends React.Component<
     this.draggedRepository = null
     this.draggedGroup = null
     this.suppressClickUntil = Date.now() + 300
-    this.setState({ dropGroup: null, dropPosition: null, dropRepository: null })
+    this.setState({
+      draggedRepositoryId: null,
+      dropGroup: null,
+      dropPosition: null,
+    })
   }
 
   private onGroupDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     const id = event.currentTarget.dataset.group
-    if (
-      id &&
-      id !== WorkingGroup &&
-      (this.draggedRepository !== null || this.draggedGroup !== null)
-    ) {
+    if (this.draggedRepository !== null) {
+      this.updateRepositoryDropGroup(event, id)
+      return
+    }
+
+    if (id && id !== WorkingGroup && this.draggedGroup !== null) {
       event.preventDefault()
       event.stopPropagation()
       event.dataTransfer.dropEffect = 'move'
@@ -742,22 +861,46 @@ export class RepositoriesList extends React.Component<
         this.state.dropGroup !== id ||
         this.state.dropPosition !== dropPosition
       ) {
-        this.setState({ dropGroup: id, dropPosition, dropRepository: null })
+        this.setState({
+          dropGroup: id,
+          dropPosition,
+        })
       }
     }
   }
 
-  private onGroupDragLeave = () =>
-    this.setState({ dropGroup: null, dropPosition: null, dropRepository: null })
+  private onGroupDragLeave = (event?: React.DragEvent<HTMLDivElement>) => {
+    if (event) {
+      const id = event.currentTarget.dataset.group
+      // Repository drags are resolved by the list-level dragover handler. A
+      // row or header dragleave is part of normal descendant transitions and
+      // must not clear the section target between dragover events.
+      if (this.draggedRepository !== null) {
+        return
+      }
+      if (
+        typeof Node !== 'undefined' &&
+        event.relatedTarget instanceof Node &&
+        event.currentTarget.contains(event.relatedTarget)
+      ) {
+        return
+      }
+      if (
+        id === undefined ||
+        this.state.dropGroup !== id ||
+        this.state.dropPosition !== null
+      ) {
+        return
+      }
+    }
+    this.clearDropTarget()
+  }
 
   private onGroupDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
     const id = event.currentTarget.dataset.group
-    const repository = this.props.repositories.find(
-      r => r.id === this.draggedRepository
-    )
     if (id && this.draggedGroup !== null) {
+      event.preventDefault()
+      event.stopPropagation()
       const rect = event.currentTarget.getBoundingClientRect()
       const position =
         id === Ungrouped || event.clientY < rect.top + rect.height / 2
@@ -771,8 +914,19 @@ export class RepositoriesList extends React.Component<
           position
         )
       )
-    } else if (id && id !== WorkingGroup && repository) {
-      this.assignGroup(repositoryOrganizationKey(repository), id)
+    } else if (id && this.draggedRepository !== null) {
+      const repository = this.props.repositories.find(
+        r => r.id === this.draggedRepository
+      )
+      if (
+        id !== WorkingGroup &&
+        repository &&
+        this.getRepositoryGroup(repository) !== id
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        this.assignGroup(repositoryOrganizationKey(repository), id)
+      }
     }
     this.onRepositoryDragEnd()
   }
@@ -783,8 +937,10 @@ export class RepositoriesList extends React.Component<
       return
     }
     event.stopPropagation()
+    this.clearDropTarget()
     this.draggedGroup = id
     this.draggedRepository = null
+    this.setState({ draggedRepositoryId: null })
     event.dataTransfer.setData('application/x-desktop-repository-group', id)
     event.dataTransfer.effectAllowed = 'move'
     this.clearGroupDragImage()
@@ -884,10 +1040,6 @@ export class RepositoriesList extends React.Component<
   }
 
   private clearDropPreview = () => {
-    this.dragList?.classList.remove('repository-drag-active')
-    this.dragList?.querySelectorAll<HTMLElement>('.list-item').forEach(row => {
-      row.style.removeProperty('transform')
-    })
     this.dragList?.querySelector('.repository-drop-placeholder')?.remove()
   }
 
@@ -897,7 +1049,28 @@ export class RepositoriesList extends React.Component<
   }
 
   private onListDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (this.draggedRepository !== null) {
+      if (this.isDragInsideElement(event.currentTarget, event)) {
+        return
+      }
+
+      // A native dragleave may have neither a relatedTarget nor a usable hit
+      // test while the pointer is crossing virtualized descendants. Keep the
+      // current group preview in that ambiguous case. The document dragover
+      // listener below clears it as soon as the pointer is verifiably outside.
+      if (
+        event.relatedTarget === null &&
+        (typeof document === 'undefined' ||
+          typeof document.elementFromPoint !== 'function' ||
+          typeof event.clientX !== 'number' ||
+          typeof event.clientY !== 'number' ||
+          document.elementFromPoint(event.clientX, event.clientY) === null)
+      ) {
+        return
+      }
+    }
     if (
+      typeof Node !== 'undefined' &&
       event.relatedTarget instanceof Node &&
       event.currentTarget.contains(event.relatedTarget)
     ) {
@@ -905,10 +1078,95 @@ export class RepositoriesList extends React.Component<
     }
     this.clearDropPreview()
     this.dropSlot = null
+    this.clearDropTarget()
+  }
+
+  private isDragInsideElement = (
+    element: HTMLElement,
+    event: {
+      readonly relatedTarget: EventTarget | null
+      readonly clientX: number
+      readonly clientY: number
+    }
+  ) => {
+    if (
+      typeof Node !== 'undefined' &&
+      event.relatedTarget instanceof Node &&
+      element.contains(event.relatedTarget)
+    ) {
+      return true
+    }
+
+    if (
+      typeof document !== 'undefined' &&
+      typeof document.elementFromPoint === 'function' &&
+      typeof event.clientX === 'number' &&
+      typeof event.clientY === 'number'
+    ) {
+      const pointed = document.elementFromPoint(event.clientX, event.clientY)
+      return pointed !== null && element.contains(pointed)
+    }
+
+    return false
+  }
+
+  private onDocumentDragOver = (event: DragEvent) => {
+    if (
+      this.draggedRepository === null ||
+      this.repositoryListElement === null
+    ) {
+      return
+    }
+
+    if (
+      typeof Node !== 'undefined' &&
+      event.target instanceof Node &&
+      this.repositoryListElement.contains(event.target)
+    ) {
+      return
+    }
+
+    if (
+      typeof document !== 'undefined' &&
+      typeof document.elementFromPoint === 'function' &&
+      typeof event.clientX === 'number' &&
+      typeof event.clientY === 'number'
+    ) {
+      const pointed = document.elementFromPoint(event.clientX, event.clientY)
+      if (pointed !== null && this.repositoryListElement.contains(pointed)) {
+        return
+      }
+    }
+
+    this.clearDropTarget()
+  }
+
+  private onRepositoryListRef = (element: HTMLDivElement | null) => {
+    this.repositoryListElement = element
+  }
+
+  private onRepositoryListDragOver = (
+    event: React.DragEvent<HTMLDivElement>
+  ) => {
+    // Resolve every repository drag at the list boundary. This keeps the
+    // target stable while the pointer crosses rows, headers, and empty space
+    // inside one section instead of letting descendant dragleave handlers
+    // briefly replace the group-level preview.
+    this.updateRepositoryDropGroup(
+      event,
+      this.getRepositoryDragGroupFromTarget(event.target)
+    )
   }
 
   private onListDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (this.draggedRepository === null && this.draggedGroup === null) {
+    if (this.draggedRepository !== null) {
+      this.onRepositoryListDragOver(event)
+      return
+    }
+
+    // Repository drags only assign a group when dropped on a row or heading;
+    // they never create a list-wide insertion preview.
+    if (this.draggedGroup === null) {
       return
     }
     event.stopPropagation()
@@ -932,7 +1190,7 @@ export class RepositoriesList extends React.Component<
     }
     const elements = Array.from(
       scroll.querySelectorAll<HTMLElement>(
-        '.repository-custom-group, .repository-activity-row'
+        '.filter-list-group-header[data-group], .repository-activity-row'
       )
     )
     const rows = elements.map(element => {
@@ -953,7 +1211,7 @@ export class RepositoriesList extends React.Component<
       rows,
       event.clientY,
       this.draggedGroup,
-      this.draggedRepository
+      null
     )
     this.dropSlot = slot
     if (!slot) {
@@ -961,79 +1219,50 @@ export class RepositoriesList extends React.Component<
     }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-    // Group headers live in nested virtualized grids; moving those cells while
-    // overflow is visible causes duplicate or clipped headers.
-    if (this.draggedRepository !== null) {
-      this.dragList.classList.add('repository-drag-active')
-      // Shift row wrappers, leaving their layout positions stable for hit testing.
-      elements.forEach((element, index) => {
-        const row = element.closest<HTMLElement>('.list-item')
-        if (row) {
-          row.style.transform = `translateY(${
-            rows[index].top >= slot.y - 1 ? 14 : -14
-          }px)`
-        }
-      })
-    }
-    const groupDrag = this.draggedGroup !== null
     const placeholder = document.createElement('div')
-    placeholder.className = `repository-drop-placeholder${
-      groupDrag ? ' repository-group-drop-placeholder' : ''
-    }`
+    placeholder.className =
+      'repository-drop-placeholder repository-group-drop-placeholder'
     placeholder.style.top = `${
-      slot.y - this.dragList.getBoundingClientRect().top - (groupDrag ? 1 : 13)
+      slot.y - this.dragList.getBoundingClientRect().top - 1
     }px`
-    if (!groupDrag) {
-      placeholder.textContent = 'Move repository here'
-    }
     this.dragList.appendChild(placeholder)
   }
 
   private onListDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (this.draggedRepository === null && this.draggedGroup === null) {
+    if (this.draggedRepository !== null) {
+      const repository = this.props.repositories.find(
+        candidate => candidate.id === this.draggedRepository
+      )
+      const group = this.getRepositoryDragGroupFromTarget(event.target)
+      if (
+        repository !== undefined &&
+        group !== null &&
+        group !== WorkingGroup &&
+        this.getRepositoryGroup(repository) !== group
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        this.assignGroup(repositoryOrganizationKey(repository), group)
+      }
+      this.onRepositoryDragEnd()
+      return
+    }
+
+    if (this.draggedGroup === null) {
       return
     }
     event.preventDefault()
     event.stopPropagation()
     const slot = this.dropSlot
     if (slot) {
-      const source = this.props.repositories.find(
-        r => r.id === this.draggedRepository
-      )
-      const target = this.props.repositories.find(
-        r => r.id === slot.repositoryId
-      )
-      if (this.draggedGroup !== null) {
-        this.updateOrganization(
-          moveRepositoryGroup(
-            this.state.organization,
-            this.draggedGroup,
-            slot.group,
-            slot.position
-          )
+      this.updateOrganization(
+        moveRepositoryGroup(
+          this.state.organization,
+          this.draggedGroup,
+          slot.group,
+          slot.position
         )
-      } else if (source && target) {
-        const fallback = [...this.props.repositories]
-          .sort(
-            (a, b) =>
-              a.name.localeCompare(b.name, undefined, {
-                sensitivity: 'base',
-              }) || a.path.localeCompare(b.path)
-          )
-          .map(repositoryOrganizationKey)
-        this.updateOrganization(
-          moveRepository(
-            this.state.organization,
-            repositoryOrganizationKey(source),
-            repositoryOrganizationKey(target),
-            slot.group,
-            slot.position,
-            fallback
-          )
-        )
-      } else if (source) {
-        this.assignGroup(repositoryOrganizationKey(source), slot.group)
-      }
+      )
     }
     this.onRepositoryDragEnd()
   }
@@ -1167,7 +1396,21 @@ export class RepositoriesList extends React.Component<
       this.state.activityPreferences,
       '_LocalActivity_',
       this.state.organization
-    )
+    ).map(group => ({
+      ...group,
+      // Working is a derived duplicate of the saved-group row. Keep the
+      // repository ID for drag/drop and selection callbacks, while giving the
+      // list a distinct item ID so the two visible copies can be selected and
+      // keyed independently.
+      items: group.items.map(item =>
+        item.workingGroupName === undefined
+          ? item
+          : {
+              ...item,
+              id: `${item.id}:working:${activityKey(item.repository.path)}`,
+            }
+      ),
+    }))
     this.groupCounts = new Map(
       groups.map(group => [
         this.getGroupIdentifierKey(group.identifier),
@@ -1182,6 +1425,7 @@ export class RepositoriesList extends React.Component<
 
     return (
       <div
+        ref={this.onRepositoryListRef}
         className="repository-list"
         onDragOverCapture={this.onListDragOver}
         onDropCapture={this.onListDrop}
@@ -1196,6 +1440,9 @@ export class RepositoriesList extends React.Component<
           filterText={this.props.filterText}
           onFilterTextChanged={this.props.onFilterTextChanged}
           renderItem={this.renderItem}
+          getItemClassName={this.getRepositoryItemClassName}
+          getGroupSectionClassName={this.getRepositoryGroupSectionClassName}
+          getGroupSectionDataGroup={this.getGroupIdentifierKey}
           renderRowFocusTooltip={this.renderRowFocusTooltip}
           renderGroupHeader={this.renderGroupHeader}
           onItemClick={this.onItemClick}
@@ -1206,8 +1453,8 @@ export class RepositoriesList extends React.Component<
           groups={groups}
           invalidationProps={{
             organization: this.state.organization,
+            draggedRepositoryId: this.state.draggedRepositoryId,
             dropGroup: this.state.dropGroup,
-            dropRepository: this.state.dropRepository,
             dropPosition: this.state.dropPosition,
             activity: this.state.activity,
             activityPreferences: this.state.activityPreferences,

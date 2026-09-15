@@ -17,13 +17,13 @@ Open **Current Repository**. The list always shows these sections in order:
 
 Drag a repository onto a group heading (including an empty group), or use its
 right-click **Move to group** menu. Dragging into Ungrouped removes an assignment.
-Working is automatic and cannot be a manual drop target. A repository appears
-once; its saved assignment is retained while it is Working, and restored once
-its changes are committed and pushed. Use the group heading's **…** menu to
-rename or delete a group. Deleting a group leaves all repositories registered
-and moves its assignments to Ungrouped. Group names and assignments persist
-across app restarts. Working rows show their saved group in a compact tag on
-the left (or Ungrouped).
+Working is automatic and cannot be a manual drop target. A repository with
+activity appears in Working and remains visible in its saved group (or
+Ungrouped), so status changes do not move it out of its original section.
+Working rows show their saved group in a compact tag on the left (or
+Ungrouped). Use the group heading's **…** menu to rename or delete a group.
+Deleting a group leaves all repositories registered and moves its assignments
+to Ungrouped. Group names and assignments persist across app restarts.
 
 Creating or renaming a group opens a separate modal dialog with immediate
 validation for empty, reserved, overly long, or duplicate names. Duplicate
@@ -36,21 +36,24 @@ The **…** menu also has **Move group up/down**, and the focused heading accept
 Alt+Up/Down arrow keys. Group order is saved; Working and Ungrouped stay fixed at
 the top and bottom.
 
-The view options control sorting **within Working only**:
+The view options control sorting within every repository section:
 
 - **Recent changes** (default): newest estimated local edit or HEAD commit
-  first, including clean repositories with unpublished commits. A commit no
-  longer sends a recently edited repository back into alphabetical order.
-- **Uncommitted first**: dirty working copies first, then alphabetically.
-- **Name**: alphabetical order within Working.
+  first in each section, including clean repositories with unpublished commits.
+  A commit no longer sends a recently edited repository back into alphabetical
+  order.
+- **Uncommitted first**: dirty working copies first, then alphabetically in each
+  section.
+- **Name**: alphabetical order in each section.
 - **Uncommitted only**: show staged, unstaged, untracked, and conflicted changes.
   Unpushed commits alone do not satisfy this explicit filter.
 
 Name search composes with the filter. In activity modes it preserves activity
 order instead of fuzzy relevance order. Empty headings stay available for
 assignment when not filtering. Keyboard selection follows the repository ID
-as activity updates or assignments move a row. Hover a row to see changed-file
-and unpushed-commit counts and its activity time.
+as activity updates or assignments move a row; the Working and original-group
+copies refer to the same repository. Hover a row to see changed-file and
+unpushed-commit counts and its activity time.
 
 Unpushed counts compare the current HEAD with its configured upstream. Other
 local branches do not affect Working. Without an upstream (including detached
@@ -97,11 +100,10 @@ in the Uncommitted-only filter, with an unavailable status. A failed pass does n
 overwrite the previous known change count with zero.
 
 Activity is keyed by the repository's current worktree path, so a linked
-worktree is scanned and ordered using its own path. Group assignments and manual
-`repositoryOrder` use `mainWorktreePath` as the canonical organization path
-when it is available. Switching worktrees therefore preserves the repository's
-group and manual position while keeping activity data separate for each
-worktree.
+worktree is scanned and ordered using its own path. Group assignments use
+`mainWorktreePath` as the canonical organization path when it is available.
+Switching worktrees therefore preserves the repository's group while keeping
+activity data separate for each worktree.
 
 ## Meaning of recent
 
@@ -206,7 +208,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 51 repository activity checks, 28 UI wiring
+The direct runners currently cover 51 repository activity checks, 30 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.
@@ -223,12 +225,19 @@ temporarily reveals matching repositories in collapsed groups; clearing search
 restores the saved visibility. Heading toggles are inactive during search.
 
 Drag a custom group heading to reorder groups (or use Alt+Up/Down while its
-heading is focused, or its menu). There is no separate drag handle. Drag a
-repository above or below another to save its position and, across groups,
-its membership. Working alone uses the Sort by setting; custom groups and
-Ungrouped retain manual order, including after searching or returning from
-Working. New repositories follow saved entries in name order.
+heading is focused, or its menu). There is no separate drag handle. Repository
+rows always follow the selected Sort by setting within their section. Drag a
+repository onto a group heading or another repository to change its group. For
+a valid cross-group drag, a single inset border surrounds the destination
+group's header and body, and remains stable while the pointer moves within that
+group. The source repository's saved group, including its header and empty
+space, fades as one surface without changing its colors. Its Working duplicate,
+when visible, fades as a whole row. Dropping onto the same repository, or onto
+another repository already in the same group, has no effect and clears the
+highlight. Working is derived and cannot be a drop target. Repository drops
+change membership only; they do not save a row position or show an insertion
+preview.
 
-Dragging resolves the nearest insertion slot across the whole list, including
-row gaps and group bodies. Rows shift apart around a visible drop placeholder.
-Dropping commits that previewed slot; leaving the list or cancelling clears it.
+Group dragging resolves the nearest group insertion slot across the visible
+list, including section bodies. A drop placeholder shows the target; leaving
+the list or cancelling clears it.

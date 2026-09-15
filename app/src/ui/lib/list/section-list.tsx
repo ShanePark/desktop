@@ -151,6 +151,16 @@ interface ISectionListProps {
   readonly rowCustomClassNameMap?: Map<string, ReadonlyArray<RowIndexPath>>
 
   /**
+   * Used to attach special classes to specific sections
+   */
+  readonly sectionCustomClassNameMap?: Map<string, ReadonlyArray<number>>
+
+  /**
+   * Used to identify a section when the visible rows are virtualized away
+   */
+  readonly sectionDataGroupMap?: ReadonlyMap<number, string>
+
+  /**
    * This function will be called when a pointer device is pressed and then
    * released on a selectable row. Note that this follows the conventions
    * of button elements such that pressing Enter or Space on a keyboard
@@ -1185,6 +1195,24 @@ export class SectionList extends React.Component<
     return customClasses.length === 0 ? undefined : customClasses.join(' ')
   }
 
+  private getCustomSectionClassNames = (section: number) => {
+    const { sectionCustomClassNameMap } = this.props
+    if (sectionCustomClassNameMap === undefined) {
+      return undefined
+    }
+
+    const customClasses = new Array<string>()
+    sectionCustomClassNameMap.forEach(
+      (sections: ReadonlyArray<number>, className: string) => {
+        if (sections.includes(section)) {
+          customClasses.push(className)
+        }
+      }
+    )
+
+    return customClasses.length === 0 ? undefined : customClasses.join(' ')
+  }
+
   private getRowRenderer = (
     section: number,
     firstSelectableRowIndexPath: RowIndexPath | null
@@ -1367,6 +1395,7 @@ export class SectionList extends React.Component<
       // we select the last item from the selection array for this prop
       const sectionHeight = this.getSectionHeight(section)
       const offset = this.getSectionScrollOffset(section)
+      const sectionDataGroup = this.props.sectionDataGroupMap?.get(section)
 
       const relativeScrollTop = Math.max(
         0,
@@ -1376,6 +1405,12 @@ export class SectionList extends React.Component<
       return (
         <Grid
           key={section}
+          className={this.getCustomSectionClassNames(section)}
+          containerProps={
+            sectionDataGroup === undefined
+              ? undefined
+              : { 'data-group': sectionDataGroup }
+          }
           id={this.props.accessibleListId}
           role="listbox"
           ref={this.getOnGridRef(section)}

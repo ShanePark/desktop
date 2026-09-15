@@ -74,7 +74,7 @@ export class RepositoryActivityToolbar extends React.Component<
       >
         <h3 id="repository-activity-options-header">View options</h3>
         <fieldset>
-          <legend>Working — sort by</legend>
+          <legend>Sort by</legend>
           <RadioButton<ActivitySort>
             value="recent"
             checked={preferences.sort === 'recent'}

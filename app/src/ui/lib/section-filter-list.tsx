@@ -98,6 +98,28 @@ interface ISectionFilterListProps<T extends IFilterListItem, GroupIdentifier> {
   readonly renderPreList?: () => JSX.Element | null
 
   /**
+   * Optional class name for a section's virtualized container. This is useful
+   * for a stateful section-wide affordance that must span its header and rows.
+   */
+  readonly getGroupSectionClassName?: (
+    identifier: GroupIdentifier
+  ) => string | undefined
+
+  /**
+   * Optional stable identity for a section's virtualized container. This lets
+   * consumers resolve drag boundaries while the header or rows are virtualized
+   * away.
+   */
+  readonly getGroupSectionDataGroup?: (
+    identifier: GroupIdentifier
+  ) => string | undefined
+
+  /**
+   * Optional class name for the outer list row rendered for an item.
+   */
+  readonly getItemClassName?: (item: T) => string | undefined
+
+  /**
    * This function will be called when a pointer device is pressed and then
    * released on a selectable row. Note that this follows the conventions
    * of button elements such that pressing Enter or Space on a keyboard
@@ -414,6 +436,9 @@ export class SectionFilterList<
           onRowClick={this.onRowClick}
           onRowKeyDown={this.onRowKeyDown}
           onRowContextMenu={this.onRowContextMenu}
+          rowCustomClassNameMap={this.getRowCustomClassNameMap()}
+          sectionCustomClassNameMap={this.getSectionCustomClassNameMap()}
+          sectionDataGroupMap={this.getSectionDataGroupMap()}
           canSelectRow={this.canSelectRow}
           invalidationProps={{
             ...this.props,
@@ -422,6 +447,81 @@ export class SectionFilterList<
         />
       )
     }
+  }
+
+  private getRowCustomClassNameMap = () => {
+    const getItemClassName = this.props.getItemClassName
+    if (getItemClassName === undefined) {
+      return undefined
+    }
+
+    const rowsByClassName = new Map<string, RowIndexPath[]>()
+    this.state.rows.forEach((sectionRows, section) => {
+      sectionRows.forEach((row, rowIndex) => {
+        if (row.kind !== 'item') {
+          return
+        }
+
+        const className = getItemClassName(row.item)
+        if (className === undefined || className.length === 0) {
+          return
+        }
+
+        const rows = rowsByClassName.get(className) ?? []
+        rows.push({ section, row: rowIndex })
+        rowsByClassName.set(className, rows)
+      })
+    })
+
+    return rowsByClassName.size > 0 ? rowsByClassName : undefined
+  }
+
+  private getSectionCustomClassNameMap = () => {
+    const getGroupSectionClassName = this.props.getGroupSectionClassName
+    if (getGroupSectionClassName === undefined) {
+      return undefined
+    }
+
+    const sectionsByClassName = new Map<string, number[]>()
+    this.state.groups.forEach((groupIndex, section) => {
+      const group = this.props.groups[groupIndex]
+      if (group === undefined) {
+        return
+      }
+
+      const className = getGroupSectionClassName(group.identifier)
+      if (className === undefined || className.length === 0) {
+        return
+      }
+
+      const sections = sectionsByClassName.get(className) ?? []
+      sections.push(section)
+      sectionsByClassName.set(className, sections)
+    })
+
+    return sectionsByClassName.size > 0 ? sectionsByClassName : undefined
+  }
+
+  private getSectionDataGroupMap = () => {
+    const getGroupSectionDataGroup = this.props.getGroupSectionDataGroup
+    if (getGroupSectionDataGroup === undefined) {
+      return undefined
+    }
+
+    const groupsBySection = new Map<number, string>()
+    this.state.groups.forEach((groupIndex, section) => {
+      const group = this.props.groups[groupIndex]
+      if (group === undefined) {
+        return
+      }
+
+      const dataGroup = getGroupSectionDataGroup(group.identifier)
+      if (dataGroup !== undefined && dataGroup.length > 0) {
+        groupsBySection.set(section, dataGroup)
+      }
+    })
+
+    return groupsBySection.size > 0 ? groupsBySection : undefined
   }
 
   private sectionHasHeader = (section: number) => {

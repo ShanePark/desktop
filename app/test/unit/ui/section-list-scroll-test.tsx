@@ -94,12 +94,18 @@ afterEach(() => {
   }
 })
 
-function renderSectionList(rowCount: ReadonlyArray<number>) {
+function renderSectionList(
+  rowCount: ReadonlyArray<number>,
+  sectionCustomClassNameMap?: Map<string, ReadonlyArray<number>>,
+  sectionDataGroupMap?: ReadonlyMap<number, string>
+) {
   return render(
     <SectionList
       rowCount={rowCount}
       rowHeight={ROW_HEIGHT}
       selectedRows={[]}
+      sectionCustomClassNameMap={sectionCustomClassNameMap}
+      sectionDataGroupMap={sectionDataGroupMap}
       rowRenderer={(indexPath: RowIndexPath) => (
         <div>{`row ${indexPath.section}-${indexPath.row}`}</div>
       )}
@@ -108,6 +114,32 @@ function renderSectionList(rowCount: ReadonlyArray<number>) {
 }
 
 describe('SectionList scrolling', () => {
+  it('applies custom classes to the full virtualized section container', async () => {
+    const { container } = renderSectionList(
+      [3, 3],
+      new Map([['repository-drop-group-section', [1]]]),
+      new Map([[1, 'group-b']])
+    )
+
+    await waitFor(() => {
+      assert.ok(
+        container.querySelector(
+          '.ReactVirtualized__Grid.repository-drop-group-section'
+        ) !== null,
+        'expected the target section grid to receive the custom class'
+      )
+    })
+
+    await waitFor(() => {
+      assert.ok(
+        container.querySelector(
+          '.ReactVirtualized__Grid[data-group="group-b"]'
+        ) !== null,
+        'expected the section grid to keep its group identity'
+      )
+    })
+  })
+
   it('never makes per-section grids independently scrollable', async () => {
     // The first section is far taller than the visible list height, the rest
     // fit comfortably. This reproduces the repository list layout where one
