@@ -1,5 +1,6 @@
 out/
 dist/
+.local-desktop/
 vendor/
 tslint-rules/*.js
 npm-debug.log

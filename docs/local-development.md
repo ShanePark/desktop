@@ -25,6 +25,19 @@ remote is not required for daily work on this fork. Add one only when an upstrea
 synchronization is explicitly requested. Removing a remote does not remove local
 commits or local branches.
 
+## Verify before committing
+
+Before committing, run the full lint command used by CI and the focused tests
+for the changes:
+
+```sh
+node vendor/yarn-1.21.1.js lint
+```
+
+Run this after the final edits. A successful build or lint checks limited to
+individual files do not replace the full lint command. Resolve failures caused
+by the changes before committing, and report any pre-existing failures.
+
 ## Build and review through the Dock
 
 The user reviews application changes through the existing GitHub Desktop Dock
