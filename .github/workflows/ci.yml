@@ -12,62 +12,20 @@ on:
     branches:
       - linux
       - 'linux-release-*'
-  workflow_call:
-    inputs:
-      repository:
-        default: desktop/desktop
-        required: false
-        type: string
-      ref:
-        required: true
-        type: string
-      upload-artifacts:
-        default: false
-        required: false
-        type: boolean
-      environment:
-        type: string
-        required: true
-      sign:
-        type: boolean
-        default: true
-        required: false
-      error-reporting-endpoint:
-        type: string
-        required: false
-      non-fatal-error-reporting-endpoint:
-        type: string
-        required: false
-    secrets:
-      AZURE_CODE_SIGNING_TENANT_ID:
-      AZURE_CODE_SIGNING_CLIENT_ID:
-      DESKTOP_OAUTH_CLIENT_ID:
-      DESKTOP_OAUTH_CLIENT_SECRET:
-      APPLE_ID:
-      APPLE_ID_PASSWORD:
-      APPLE_TEAM_ID:
-      APPLE_APPLICATION_CERT:
-      APPLE_APPLICATION_CERT_PASSWORD:
+
+permissions:
+  contents: read
 
 env:
   NODE_VERSION: 24.15.0
-  DESKTOP_ERROR_REPORTING_ENDPOINT: ${{ inputs.error-reporting-endpoint }}
-  DESKTOP_NON_FATAL_ERROR_REPORTING_ENDPOINT:
-    ${{ inputs.non-fatal-error-reporting-endpoint }}
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      RELEASE_CHANNEL: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref }}
           submodules: recursive
       - uses: actions/setup-node@v6
         with:

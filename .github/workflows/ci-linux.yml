@@ -15,8 +15,8 @@ on:
       - linux-vnext
       - 'linux-release-*'
 
-env:
-  NODE_VERSION: 24.15.0
+permissions:
+  contents: read
 
 jobs:
   arm64:
@@ -25,8 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref }}
           submodules: recursive
       - name: Package and test application in container
         uses: ./.github/actions/desktop-ubuntu-arm64-packaging
@@ -47,8 +45,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.ref }}
           submodules: recursive
       - name: Package and test application in container
         uses: ./.github/actions/desktop-ubuntu-amd64-packaging
@@ -63,69 +59,3 @@ jobs:
             dist/*.sha256
           retention-days: 5
           if-no-files-found: error
-
-  publish:
-    name: Create GitHub release
-    needs: [arm64, amd64]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: yarn
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: './artifacts'
-
-      - name: Display structure of downloaded files
-        run: ls -R
-        working-directory: './artifacts'
-
-      - name: Get tag name without prefix
-        run: |
-          RELEASE_TAG=${GITHUB_REF/refs\/tags\//}
-          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
-          tagNameWithoutPrefix="${RELEASE_TAG:8}"
-          echo "RELEASE_TAG_WITHOUT_PREFIX=${tagNameWithoutPrefix}" >> $GITHUB_ENV
-
-      # TODO: generate release notes
-      #    - pull in default if version matches X.Y.Z-linux1
-      #    - otherwise stub template
-
-      - name: Generate release notes
-        run: |
-          node -v
-          yarn
-          node -r ts-node/register script/generate-release-notes.ts "${{ github.workspace }}/artifacts" "${{ env.RELEASE_TAG_WITHOUT_PREFIX }}"
-          RELEASE_NOTES_FILE=script/release_notes.txt
-          if [[ ! -f "$RELEASE_NOTES_FILE" ]]; then
-              echo "$RELEASE_NOTES_FILE does not exist. Something might have gone wrong while generating the release notes."
-              exit 1
-          fi
-          echo "Release notes:"
-          echo "---"
-          cat ${RELEASE_NOTES_FILE}
-          echo "---"
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: GitHub Desktop for Linux ${{ env.RELEASE_TAG_WITHOUT_PREFIX }}
-          body_path: script/release_notes.txt
-          files: |
-            artifacts/**/*.AppImage
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.sha256
-          draft: true
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
