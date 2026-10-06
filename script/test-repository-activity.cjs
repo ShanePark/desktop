@@ -185,7 +185,7 @@ async function main() {
       const data = new Map([[key(a.repository.path), { ...snap(0), checkedAt: 0 }]])
       Assert.deepEqual(ids(project([group('all', [a])], data, prefs('recent', true), 'activity')), ['1'])
     })
-    test('stale snapshots fall back to current row indicators for Working and its original group', () => {
+    test('stale snapshots fall back to current row indicators for exclusive Working visibility', () => {
       const dirty = {
         ...row(1, 'dirty'),
         changedFilesCount: 3,
@@ -230,10 +230,10 @@ async function main() {
         })
         Assert.deepEqual(
           result.find(g => g.identifier === 'group-a').items.map(r => r.id),
-          ['3', '2', '1']
+          ['3']
         )
         Assert.equal(
-          result.find(g => g.identifier === 'group-a').items.find(r => r.id === '1').workingGroupName,
+          result.find(g => g.identifier === 'group-a').items[0].workingGroupName,
           undefined
         )
       }

@@ -83,7 +83,7 @@ async function main() {
     assert.equal((await readRepositoryActivity(repo)).unpushedCount, 1)
     git('checkout', 'main')
   })
-  await test('Working duplicates assigned repositories while every section follows the selected filter order', () => {
+  await test('Working exclusively shows active repositories while every section follows the selected filter order', () => {
     const rows = ['z-new', 'a-old', 'dirty', 'unpushed'].map((name, i) => ({
       id: String(i), repository: { id: i, path: path.join(tmp, name), name }, text: [name], changedFilesCount: 0, needsDisambiguation: false,
     }))
@@ -95,14 +95,14 @@ async function main() {
     const projected = projectActivityGroups([{ identifier: 'old', items: rows }], activities, { sort: 'recent', onlyUncommitted: false }, 'activity', organization)
     assert.deepEqual(projected.map(g => g.identifier), [Org.WorkingGroup, 'group-personal', Org.Ungrouped])
     assert.deepEqual(projected[0].items.map(r => r.id), ['2', '3'])
-    assert.deepEqual(projected[1].items.map(r => r.id), ['0', '1', '2', '3'])
+    assert.deepEqual(projected[1].items.map(r => r.id), ['0', '1'])
     assert.equal(projected[0].items[0].workingGroupName, 'Personal')
-    assert.equal(projected[1].items[2].workingGroupName, undefined)
+    assert.equal(projected[1].items[0].workingGroupName, undefined)
     const nameSorted = projectActivityGroups([{ identifier: 'old', items: rows }], activities, { sort: 'name', onlyUncommitted: false }, 'activity', organization)
-    assert.deepEqual(nameSorted[1].items.map(r => r.id), ['1', '2', '3', '0'])
+    assert.deepEqual(nameSorted[1].items.map(r => r.id), ['1', '0'])
     const filtered = projectActivityGroups([{ identifier: 'old', items: rows }], activities, { sort: 'recent', onlyUncommitted: true }, 'activity', organization)
     assert.deepEqual(filtered[0].items.map(r => r.id), ['2'])
-    assert.deepEqual(filtered[1].items.map(r => r.id), ['2'])
+    assert.deepEqual(filtered[1].items.map(r => r.id), [])
     const ungroupedOrganization = {
       ...organization,
       assignments: Object.fromEntries(
@@ -116,8 +116,20 @@ async function main() {
       'activity',
       ungroupedOrganization
     )
-    assert.deepEqual(ungrouped[2].items.map(r => r.id), ['3'])
+    assert.deepEqual(ungrouped[2].items.map(r => r.id), [])
     assert.equal(ungrouped[0].items[1].workingGroupName, 'Ungrouped')
+    const finished = projectActivityGroups(
+      [{ identifier: 'old', items: rows }],
+      new Map([...activities].map(([key, activity]) => [key, {
+        ...activity, changedFilesCount: 0, unpushedCount: 0,
+      }])),
+      { sort: 'recent', onlyUncommitted: false },
+      'activity',
+      ungroupedOrganization
+    )
+    assert.deepEqual(finished[0].items, [])
+    assert.deepEqual(finished[1].items.map(r => r.id), ['0', '1', '2'])
+    assert.deepEqual(finished[2].items.map(r => r.id), ['3'])
   })
   await test('legacy repository order is ignored across filter changes and reload', () => {
     const row = (id, name) => ({ id: String(id), repository: { id, name, path: '/fixture/' + name }, text: [name], changedFilesCount: 0, needsDisambiguation: false })
@@ -138,7 +150,7 @@ async function main() {
     activities.get('/fixture/alpha').changedFilesCount = 1
     assert.deepEqual(project('name')[0].items.map(r => r.id), ['1','3'])
     assert.deepEqual(project('recent')[0].items.map(r => r.id), ['3','1'])
-    assert.deepEqual(project('recent')[1].items.map(r => r.id), ['3','2','1'])
+    assert.deepEqual(project('recent')[1].items.map(r => r.id), ['2'])
     activities.get('/fixture/gamma').changedFilesCount = 0
     activities.get('/fixture/alpha').changedFilesCount = 0
     assert.deepEqual(project('recent')[1].items.map(r => r.id), ['3', '2', '1'])
@@ -198,7 +210,7 @@ async function main() {
     assert.equal(dirtyLinked[0].items[0].id, '1')
     assert.equal(dirtyLinked[0].items[0].changedFilesCount, 1)
     assert.equal(dirtyLinked[0].items[0].workingGroupName, 'Worktree')
-    assert.deepEqual(dirtyLinked[1].items.map(r => r.id), ['1', '2'])
+    assert.deepEqual(dirtyLinked[1].items.map(r => r.id), ['2'])
     assert.equal(dirtyLinked[1].items[0].workingGroupName, undefined)
 
     const cleanLinked = project(

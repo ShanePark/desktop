@@ -127,7 +127,7 @@ interface IRepositoriesListState {
   readonly activityPreferences: IActivityPreferences
   readonly organization: IRepositoryOrganization
   readonly groupError: string | null
-  /** The repository currently being dragged, including its Working copy. */
+  /** The repository currently being dragged, including its Working row. */
   readonly draggedRepositoryId: number | null
   readonly dropPosition: 'before' | 'after' | null
   readonly dropGroup: string | null
@@ -668,7 +668,7 @@ export class RepositoriesList extends React.Component<
       (this.draggedRepository === item.repository.id ||
         this.state.draggedRepositoryId === item.repository.id)
     // The saved group is dimmed as a whole. Keep a row-level affordance only
-    // for the derived Working copy, which has no saved group container.
+    // for the derived Working row, which has no saved group container.
     return isDraggedRepository && item.workingGroupName !== undefined
       ? 'repository-drag-source'
       : undefined
@@ -1396,21 +1396,7 @@ export class RepositoriesList extends React.Component<
       this.state.activityPreferences,
       '_LocalActivity_',
       this.state.organization
-    ).map(group => ({
-      ...group,
-      // Working is a derived duplicate of the saved-group row. Keep the
-      // repository ID for drag/drop and selection callbacks, while giving the
-      // list a distinct item ID so the two visible copies can be selected and
-      // keyed independently.
-      items: group.items.map(item =>
-        item.workingGroupName === undefined
-          ? item
-          : {
-              ...item,
-              id: `${item.id}:working:${activityKey(item.repository.path)}`,
-            }
-      ),
-    }))
+    )
     this.groupCounts = new Map(
       groups.map(group => [
         this.getGroupIdentifierKey(group.identifier),

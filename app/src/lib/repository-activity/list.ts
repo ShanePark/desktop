@@ -193,9 +193,8 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   if (organization === undefined) {
     return [{ identifier: activityGroup, items: annotated }]
   }
-  // Working is a derived view. Keep a Working copy for active repositories,
-  // while retaining every repository in its saved group so activity changes
-  // do not make rows jump between sections.
+  // Working is a derived view. Keep active repositories here exclusively;
+  // their saved assignments determine where they return when activity ends.
   const working = new Set(
     annotated
       .filter(
@@ -214,13 +213,14 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   for (const row of annotated) {
     const assigned = organization.assignments[organizationPath(row)]
     const target = assigned && buckets.has(assigned) ? assigned : Ungrouped
-    buckets.get(target)!.push(row)
     if (working.has(row.repository.id)) {
       buckets.get(WorkingGroup)!.push({
         ...row,
         workingGroupName:
           organization.groups.find(g => g.id === assigned)?.name ?? 'Ungrouped',
       })
+    } else {
+      buckets.get(target)!.push(row)
     }
   }
   // `annotated` is already ordered by the selected activity filter. Keep that

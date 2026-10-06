@@ -429,7 +429,7 @@ test('activity filter hides known-clean rows without dropping name search', () =
   Assert.equal(listElement().props.filterText, 'z-project')
   Assert.equal(listElement().props.selectedItem, null)
 })
-test('keyboard selection survives subsequent activity refreshes', () => {
+test('keyboard selection survives transitions between Working and its saved group', () => {
   picker.onActivityPreferencesChanged({
     sort: 'recent',
     onlyUncommitted: false,
@@ -437,6 +437,28 @@ test('keyboard selection survives subsequent activity refreshes', () => {
   picker.onListSelectionChanged(rows[1])
   picker.setState({ activity: { ...picker.state.activity, checking: true } })
   Assert.equal(listElement().props.selectedItem.id, '2')
+  for (const count of [0, 1]) {
+    picker.activityMonitor.notify({
+      repositories: new Map(
+        repositories.map(r => [activityKey(r.path), snapshot(count)])
+      ),
+      checking: false,
+      completed: 2,
+      total: 2,
+    })
+    const list = listElement()
+    Assert.equal(list.props.selectedItem.repository.id, repositories[1].id)
+    Assert.equal(list.props.selectedItem.id, rows[1].id)
+    Assert.equal(
+      list.props.groups.flatMap(group => group.items)
+        .filter(item => item.repository.id === repositories[1].id).length,
+      1
+    )
+    Assert.equal(
+      list.props.groups[0].items.some(item => item.repository.id === repositories[1].id),
+      count > 0
+    )
+  }
 })
 test('name sort preserves filter order across groups during search', () => {
   picker.onActivityPreferencesChanged({ sort: 'name', onlyUncommitted: false })
@@ -463,7 +485,7 @@ test('empty custom groups remain available as drop targets but search hides them
   })
   Assert.equal(searched.state.rows.length, 1)
 })
-test('create, rename, drag, and delete persist assignments while Working mirrors assigned repositories', () => {
+test('create, rename, drag, and delete persist assignments while Working hides assigned repositories', () => {
   picker.props = { ...props, filterText: '' }
   picker.onCreateGroup()
   Assert.equal(props.lastPopup.type, 'RepositoryGroupEditor')
@@ -500,6 +522,10 @@ test('create, rename, drag, and delete persist assignments while Working mirrors
   Assert.equal(
     listElement().props.groups[0].items[0].workingGroupName,
     'Personal'
+  )
+  Assert.equal(
+    listElement().props.groups.find(g => g.identifier === group.id).items.length,
+    0
   )
   const clean = snapshot(0)
   picker.activityMonitor.notify({
@@ -700,7 +726,7 @@ test('collapsed headers remain available and search reveals items temporarily', 
   )
   Assert.deepEqual(visible(new SectionFilterList(options)), [])
 })
-test('repository row drops highlight the destination group and dim every source copy', () => {
+test('repository row drops highlight the destination group and dim the source', () => {
   const original = picker.state.organization
   const groups = [
     { id: 'group-source', name: 'Source' },
@@ -757,7 +783,7 @@ test('repository row drops highlight the destination group and dim every source 
   const workingCopy = picker.renderItem(
     {
       ...rows[1],
-      id: `${rows[1].id}:working:${rows[1].repository.path}`,
+      id: rows[1].id,
       workingGroupName: 'Source',
     },
     {}
@@ -765,7 +791,7 @@ test('repository row drops highlight the destination group and dim every source 
   Assert.equal(
     listElement().props.getItemClassName({
       ...rows[1],
-      id: `${rows[1].id}:working:${rows[1].repository.path}`,
+      id: rows[1].id,
       workingGroupName: 'Source',
     }),
     'repository-drag-source'

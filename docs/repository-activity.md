@@ -18,8 +18,8 @@ Open **Current Repository**. The list always shows these sections in order:
 Drag a repository onto a group heading (including an empty group), or use its
 right-click **Move to group** menu. Dragging into Ungrouped removes an assignment.
 Working is automatic and cannot be a manual drop target. A repository with
-activity appears in Working and remains visible in its saved group (or
-Ungrouped), so status changes do not move it out of its original section.
+activity appears only in Working and is hidden from its saved group (or
+Ungrouped). When its activity ends, it returns to that section.
 Working rows show their saved group in a compact tag on the left (or
 Ungrouped). Use the group heading's **…** menu to rename or delete a group.
 Deleting a group leaves all repositories registered and moves its assignments
@@ -51,9 +51,9 @@ The view options control sorting within every repository section:
 Name search composes with the filter. In activity modes it preserves activity
 order instead of fuzzy relevance order. Empty headings stay available for
 assignment when not filtering. Keyboard selection follows the repository ID
-as activity updates or assignments move a row; the Working and original-group
-copies refer to the same repository. Hover a row to see changed-file and
-unpushed-commit counts and its activity time.
+as activity updates or assignments move a row between Working and its saved
+group. Hover a row to see changed-file and unpushed-commit counts and its
+activity time.
 
 Unpushed counts compare the current HEAD with its configured upstream. Other
 local branches do not affect Working. Without an upstream (including detached
@@ -231,9 +231,9 @@ repository onto a group heading or another repository to change its group. For
 a valid cross-group drag, a single inset border surrounds the destination
 group's header and body, and remains stable while the pointer moves within that
 group. The source repository's saved group, including its header and empty
-space, fades as one surface without changing its colors. Its Working duplicate,
-when visible, fades as a whole row. Dropping onto the same repository, or onto
-another repository already in the same group, has no effect and clears the
+space, fades as one surface without changing its colors. When the repository
+is in Working, its row fades as a whole row. Dropping onto the same repository,
+or onto another repository already in the same group, has no effect and clears the
 highlight. Working is derived and cannot be a drop target. Repository drops
 change membership only; they do not save a row position or show an insertion
 preview.
