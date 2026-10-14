@@ -129,7 +129,8 @@
 
 .list-focus-container {
   /** Ahead/behind badge colors when list item is selected but not focused */
-  .list-item.selected {
+  .list-item.selected,
+  .list-item.repository-selected-duplicate {
     .repository-list-item,
     .repository-list-item-tooltip {
       .ahead-behind {
@@ -141,7 +142,8 @@
 
   &.focus-within {
     /** Ahead/behind badge colors when list item is selected and focused */
-    .list-item.selected {
+    .list-item.selected,
+    .list-item.repository-selected-duplicate {
       .repository-list-item,
       .repository-list-item-tooltip {
         .ahead-behind {
@@ -178,6 +180,25 @@
     padding-left: 16px;
   }
 
+  // A repository listed in both Recent and its saved group is highlighted in
+  // both places, matching the selected row in _list.scss. Only the anchor row
+  // is the list's actual selection for keyboard navigation and focus.
+  .list-item.repository-selected-duplicate:not(:hover) {
+    --text-color: var(--box-selected-text-color);
+    --text-secondary-color: var(--box-selected-text-color);
+
+    color: var(--text-color);
+    background-color: var(--box-selected-background-color);
+  }
+
+  .list-focus-container.focus-within .list-item.repository-selected-duplicate {
+    --text-color: var(--box-selected-active-text-color);
+    --text-secondary-color: var(--box-selected-active-text-color);
+
+    color: var(--text-color);
+    background-color: var(--box-selected-active-background-color);
+  }
+
   // Dim the entire list item while its repository is being dragged. Applying
   // this to the SectionList row wrapper also fades a selected row's surface
   // without changing its colors or the drag image's content.
@@ -207,7 +228,9 @@
     }
   }
 
-  .repository-custom-group {
+  // Working and Recent headings use the same bar as saved group headings.
+  .repository-custom-group,
+  .repository-derived-group {
     display: flex;
     width: 100%;
     padding-top: 0;
@@ -284,6 +307,18 @@
     }
   }
 
+  // Working and Recent headings cannot be collapsed, so they have no toggle.
+  .repository-group-title {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 26px;
+    padding: 0 4px;
+    color: var(--text-color);
+  }
+
   .repository-group-count {
     flex-shrink: 0;
     padding: 0 6px;
@@ -345,10 +380,6 @@
     .octicon {
       width: 16px;
       height: 16px;
-    }
-    &.filter-active {
-      color: var(--tab-bar-active-color);
-      border-color: var(--tab-bar-active-color);
     }
   }
 

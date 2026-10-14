@@ -48,7 +48,8 @@ async function main() {
     }
     const { parseActivityStatus: parse, sampleRepositoryActivity: sample, advanceActivity: advance, activityKey: key } = require(Path.join(compiled, 'status.js'))
     const { RepositoryActivityMonitor: Monitor } = require(Path.join(compiled, 'monitor.js'))
-    const { projectActivityGroups: project, preserveActivityOrder: order } = require(Path.join(compiled, 'list.js'))
+    const { projectActivityGroups: project, preserveActivityOrder: order, savedItemId, activityScanPriority: scanPriority } = require(Path.join(compiled, 'list.js'))
+    const Org = require(Path.join(compiled, 'organization.js'))
     const Prefs = require(Path.join(compiled, 'preferences.js'))
     const snap = (count, time = 100, fingerprint = 'a'.repeat(64)) => ({
       changedFilesCount: count, fingerprint, fileModifiedAt: count ? time : null,
@@ -59,7 +60,7 @@ async function main() {
       text: [name], changedFilesCount: 0, needsDisambiguation: false,
     })
     const group = (name, items) => ({ identifier: name, items })
-    const prefs = (sort = 'recent', onlyUncommitted = false) => ({ sort, onlyUncommitted })
+    const prefs = (sort = 'recent') => ({ sort })
     const ids = groups => groups.flatMap(g => g.items.map(r => r.id))
     const memoryStorage = () => {
       const data = new Map()
@@ -174,16 +175,11 @@ async function main() {
       const data = new Map([[key(a.repository.path), snap(1, 100)], [key(z.repository.path), snap(1, 900)]])
       Assert.deepEqual(ids(project([group('all', [z, a])], data, prefs('dirty-first'), 'activity')), ['1', '2'])
     })
-    test('uncommitted-only hides confirmed clean rows but retains unknown/error rows', () => {
+    test('clean, dirty, unknown and failed rows are all listed without a status filter', () => {
       const clean = row(1, 'clean'), dirty = row(2, 'dirty'), unknown = row(3, 'unknown'), failed = row(4, 'failed')
       const data = new Map([[key(clean.repository.path), snap(0)], [key(dirty.repository.path), snap(1)], [key(failed.repository.path), { ...snap(0), error: true }]])
-      const actual = ids(project([group('all', [clean, dirty, unknown, failed])], data, prefs('recent', true), 'activity'))
-      Assert.deepEqual(new Set(actual), new Set(['2', '3', '4']))
-    })
-    test('stale clean cache is rechecked before a row is hidden', () => {
-      const a = row(1, 'a')
-      const data = new Map([[key(a.repository.path), { ...snap(0), checkedAt: 0 }]])
-      Assert.deepEqual(ids(project([group('all', [a])], data, prefs('recent', true), 'activity')), ['1'])
+      const actual = ids(project([group('all', [clean, dirty, unknown, failed])], data, { sort: 'recent', onlyUncommitted: true }, 'activity'))
+      Assert.deepEqual(new Set(actual), new Set(['1', '2', '3', '4']))
     })
     const working = (rows, data) => {
       const organization = {
@@ -261,6 +257,45 @@ async function main() {
       const result = working([discarded], new Map([[key(discarded.repository.path), { ...snap(0), unpushedCount: 0 }]]))
       Assert.deepEqual(result.working.map(r => [r.id, r.changedFilesCount]), [['1', 2]])
     })
+    test('a failed check does not hide a newer dirty indicator', async () => {
+      // The app store saw edits at 1000; the last successful check (500) was clean.
+      const edited = { ...row(1, 'edited'), changedFilesCount: 2, aheadBehind: { ahead: 0, behind: 0 }, indicatorObservedAt: 1000 }
+      const path = edited.repository.path
+      const initial = new Map([[key(path), { ...snap(0), unpushedCount: 0, checkedAt: 500 }]])
+      let final
+      const monitor = new Monitor(async () => { throw Error('timeout') }, s => { final = s }, initial, 2, () => 1100)
+      monitor.setPaths([path]); await monitor.refresh()
+      const failed = final.repositories.get(key(path))
+      Assert.equal(failed.error, true)
+      Assert.equal(failed.checkedAt, 500)
+      Assert.equal(failed.changedFilesCount, 0)
+      Assert.deepEqual(working([edited], final.repositories).working.map(r => [r.id, r.changedFilesCount]), [['1', 2]])
+    })
+    test('scans check the selected repository, then Working, then by activity, then unknown', async () => {
+      const [unknownA, older, selected, dirty, newer, unknownB, ahead] =
+        ['unknown-a', 'older', 'selected', 'dirty', 'newer', 'unknown-b', 'ahead'].map((name, i) => row(i + 1, name))
+      const rows = [unknownA, older, selected, dirty, newer, unknownB, ahead]
+      const data = new Map([
+        [key(older.repository.path), { ...snap(0), lastCommitAt: 200 }],
+        [key(selected.repository.path), { ...snap(0), lastCommitAt: 100 }],
+        [key(dirty.repository.path), snap(1, 300)],
+        [key(newer.repository.path), { ...snap(0), lastCommitAt: 900 }],
+        [key(ahead.repository.path), { ...snap(0), unpushedCount: 1, lastCommitAt: 400 }],
+      ])
+      const projected = project([group('all', rows)], data, prefs('name'), 'activity', { groups: [], assignments: {} })
+      const priority = scanPriority(projected, data, selected.repository.path)
+      const checked = []
+      const monitor = new Monitor(async path => { checked.push(Path.basename(path)); return snap(0) }, () => {}, new Map(), 1)
+      monitor.setPaths(rows.map(r => r.repository.path))
+      monitor.setPriority(() => [Path.resolve('unregistered'), ...priority])
+      await monitor.refresh()
+      Assert.deepEqual(checked, ['selected', 'ahead', 'dirty', 'newer', 'older', 'unknown-a', 'unknown-b'])
+      // Every pass reads the priority again.
+      checked.length = 0
+      monitor.setPriority(() => [unknownB.repository.path])
+      await monitor.refresh()
+      Assert.deepEqual(checked, ['unknown-b', 'unknown-a', 'older', 'selected', 'dirty', 'newer', 'ahead'])
+    })
     test('an older indicator loses to a newer successful snapshot', () => {
       const stale = { ...row(1, 'stale'), changedFilesCount: 0, aheadBehind: { ahead: 0, behind: 0 }, indicatorObservedAt: 900 }
       const data = new Map([[key(stale.repository.path), { ...snap(4, 500), unpushedCount: 1 }]])
@@ -282,15 +317,6 @@ async function main() {
       const data = new Map([[key(restored.repository.path), { ...snap(3, 500), unpushedCount: 0, checkedAt: 0 }]])
       Assert.deepEqual(working([restored], data).working.map(r => [r.id, r.changedFilesCount]), [['1', 3]])
     })
-    test('uncommitted-only treats a newer clean indicator as known', () => {
-      const clean = { ...row(1, 'clean'), indicatorObservedAt: 1500 }
-      const restored = row(2, 'restored')
-      const data = new Map([
-        [key(clean.repository.path), { ...snap(2, 500), checkedAt: 0 }],
-        [key(restored.repository.path), { ...snap(0), checkedAt: 0 }],
-      ])
-      Assert.deepEqual(ids(project([group('all', [clean, restored])], data, prefs('recent', true), 'activity')), ['2'])
-    })
     test('repository indicators do not override linked worktree snapshots', () => {
       const parent = { ...row(1, 'repo', Path.resolve('fixture/main'), { type: 'main', path: Path.resolve('fixture/main') }), indicatorObservedAt: 1500 }
       const child = { ...parent, id: '1:child', worktree: { type: 'linked', path: Path.resolve('fixture/child') } }
@@ -303,13 +329,6 @@ async function main() {
       const result = project([group('pinned', [z]), group('owner', [a])], new Map(), prefs('name'), 'activity')
       Assert.deepEqual(result.map(g => g.identifier), ['pinned', 'owner'])
       Assert.deepEqual(ids(result), ['2', '1'])
-    })
-    test('dirty linked worktrees keep a clean parent; clean siblings are filtered', () => {
-      const parent = row(1, 'repo', Path.resolve('fixture/main'), { type: 'main', path: Path.resolve('fixture/main') })
-      const child = { ...parent, id: '1:child', worktree: { type: 'linked', path: Path.resolve('fixture/child') } }
-      const clean = { ...parent, id: '1:clean', worktree: { type: 'linked', path: Path.resolve('fixture/clean') } }
-      const data = new Map([[key(parent.worktree.path), snap(0)], [key(child.worktree.path), snap(1)], [key(clean.worktree.path), snap(0)]])
-      Assert.deepEqual(ids(project([group('all', [parent, child, clean])], data, prefs('recent', true), 'activity')), ['1', '1:child'])
     })
     test('latest linked worktree activity determines the family position', () => {
       const a = row(1, 'alpha'), z = row(2, 'zeta')
@@ -325,10 +344,6 @@ async function main() {
     test('fuzzy-search results keep the requested activity ordering', () => {
       Assert.deepEqual(order([{ item: { id: 'a' } }, { item: { id: 'z' } }], ['z', 'a']).map(m => m.item.id), ['z', 'a'])
     })
-    test('empty dirty results do not retain empty group headers', () => {
-      const a = row(1, 'a')
-      Assert.deepEqual(project([group('all', [a])], new Map([[key(a.repository.path), snap(0)]]), prefs('recent', true), 'activity'), [])
-    })
     test('same names in different folders receive disambiguation', () => {
       const a = row(1, 'same', Path.resolve('one/same')), b = row(2, 'same', Path.resolve('two/same'))
       Assert.ok(project([group('all', [a, b])], new Map(), prefs(), 'activity')[0].items.every(r => r.needsDisambiguation))
@@ -336,10 +351,76 @@ async function main() {
     test('preferences persist and malformed values have safe defaults', () => {
       const storage = memoryStorage()
       Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs())
-      Prefs.saveActivityPreferences(storage, prefs('dirty-first', true))
-      Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs('dirty-first', true))
+      Prefs.saveActivityPreferences(storage, prefs('dirty-first'))
+      Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs('dirty-first'))
       for (const k of storage.data.keys()) storage.setItem(k, 'broken')
       Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs())
+    })
+    test('a stale stored Uncommitted only preference is ignored', () => {
+      const storage = memoryStorage()
+      storage.setItem('desktop.repository-activity.preferences.v1', JSON.stringify({ sort: 'name', onlyUncommitted: true }))
+      Assert.deepEqual(Prefs.readActivityPreferences(storage), prefs('name'))
+    })
+    // Recent: clean repositories ordered by their latest edit or commit time.
+    const recentFixture = () => {
+      const rows = Array.from({ length: 9 }, (_, i) => row(i + 1, `repo-${String.fromCharCode(105 - i)}`))
+      const data = new Map(rows.map((r, i) => [key(r.repository.path), { ...snap(0), unpushedCount: 0, lastCommitAt: (i + 1) * 100 }]))
+      // Newest of all, but active: Working only.
+      data.set(key(rows[8].repository.path), { ...snap(2, 5000), unpushedCount: 0 })
+      data.set(key(rows[7].repository.path), { ...snap(0), unpushedCount: 1, lastCommitAt: 4000 })
+      // No known activity time: never Recent.
+      data.set(key(rows[0].repository.path), { ...snap(0), unpushedCount: 0 })
+      // A local edit newer than its commit counts.
+      data.set(key(rows[1].repository.path), { ...snap(0), unpushedCount: 0, lastChangedAt: 3000, lastCommitAt: 200 })
+      const organization = {
+        groups: [{ id: 'group-a', name: 'A' }],
+        assignments: Object.fromEntries(rows.slice(0, 4).map(r => [r.repository.path, 'group-a'])),
+      }
+      return { rows, data, organization }
+    }
+    const section = (result, id) => result.find(g => g.identifier === id).items
+    test('Recent lists the three newest repositories outside Working regardless of sort', () => {
+      const { rows, data, organization } = recentFixture()
+      for (const sort of ['recent', 'dirty-first', 'name']) {
+        const result = project([group('all', rows)], data, prefs(sort), 'activity', organization)
+        Assert.deepEqual(result.map(g => g.identifier), [Org.WorkingGroup, Org.RecentGroup, 'group-a', Org.Ungrouped], sort)
+        Assert.deepEqual(new Set(section(result, Org.WorkingGroup).map(r => r.id)), new Set(['8', '9']), sort)
+        Assert.deepEqual(section(result, Org.RecentGroup).map(r => r.id), ['recent:2', 'recent:7', 'recent:6'], sort)
+      }
+    })
+    test('Recent rows duplicate saved rows with distinct ids and saved group tags', () => {
+      const { rows, data, organization } = recentFixture()
+      const result = project([group('all', rows)], data, prefs('name'), 'activity', organization)
+      const recent = section(result, Org.RecentGroup)
+      Assert.deepEqual(section(result, 'group-a').map(r => r.id), ['4', '3', '2', '1'])
+      Assert.deepEqual(section(result, Org.Ungrouped).map(r => r.id), ['7', '6', '5'])
+      Assert.deepEqual(recent.map(r => r.recentGroupName), ['A', 'Ungrouped', 'Ungrouped'])
+      Assert.ok(recent.every(r => r.workingGroupName === undefined))
+      Assert.equal(recent[0].repository, rows[1].repository)
+      Assert.deepEqual(recent.map(r => savedItemId(r.id)), ['2', '7', '6'])
+      Assert.equal(savedItemId('2'), '2')
+      Assert.equal(new Set(result.flatMap(g => g.items.map(r => r.id))).size, result.flatMap(g => g.items).length)
+    })
+    test('Recent excludes rows without a known activity time and leaves Working membership unchanged', () => {
+      const a = row(1, 'a'), b = row(2, 'b')
+      const data = new Map([[key(a.repository.path), { ...snap(0), unpushedCount: 0 }], [key(b.repository.path), { ...snap(1, 900), unpushedCount: 0 }]])
+      const result = project([group('all', [a, b])], data, prefs(), 'activity', { groups: [], assignments: {} })
+      Assert.deepEqual(result.map(g => g.identifier), [Org.WorkingGroup, Org.RecentGroup, Org.Ungrouped])
+      Assert.deepEqual(section(result, Org.WorkingGroup).map(r => r.id), ['2'])
+      Assert.deepEqual(section(result, Org.RecentGroup), [])
+      Assert.deepEqual(section(result, Org.Ungrouped).map(r => r.id), ['1'])
+    })
+    test('Recent is a reserved, non-collapsible derived section like Working', () => {
+      const organization = { groups: [{ id: 'group-a', name: 'A' }], assignments: {} }
+      for (const name of ['Recent', ' RECENT ', 'Working', 'ungrouped']) {
+        Assert.match(Org.validateRepositoryGroupName(organization, name), /reserved/)
+      }
+      Assert.ok(Org.isDerivedGroup(Org.WorkingGroup) && Org.isDerivedGroup(Org.RecentGroup))
+      Assert.ok(!Org.isDerivedGroup(Org.Ungrouped) && !Org.isDerivedGroup('group-a'))
+      for (const id of [Org.WorkingGroup, Org.RecentGroup]) {
+        Assert.equal(Org.toggleRepositoryGroup(organization, id), organization)
+        Assert.equal(Org.assignRepository(organization, '/fixture/a', id), organization)
+      }
     })
     test('restored snapshots are stale but retain their fingerprints and timestamps', () => {
       const storage = memoryStorage(), path = key('fixture/a')
@@ -418,6 +499,26 @@ async function main() {
       Assert.notEqual(firstState.repositories, final.repositories)
       Assert.equal(firstState.repositories.has(key(second)), false)
     })
+    test('a dirty result appears in Working before the rest of the pass finishes', async () => {
+      const rows = ['edited', 'slow-1', 'slow-2', 'slow-3', 'slow-4', 'queued'].map((name, i) => row(i + 1, name))
+      let unblock
+      const gate = new Promise(resolve => { unblock = resolve })
+      let publishedResolve
+      const published = new Promise(resolve => { publishedResolve = resolve })
+      const monitor = new Monitor(async path => {
+        if (path !== rows[0].repository.path) await gate
+        return snap(path === rows[0].repository.path ? 1 : 0)
+      }, state => {
+        if (state.checking && state.repositories.size > 0) publishedResolve(state)
+      })
+      monitor.setPaths(rows.map(r => r.repository.path))
+      const pending = monitor.refresh()
+      const interim = await Promise.race([published, sleep(100).then(() => undefined)])
+      unblock(); await pending
+      Assert.ok(interim, 'a completed dirty check should publish before the pass ends')
+      Assert.equal(interim.completed, 1)
+      Assert.deepEqual(working(rows, interim.repositories).working.map(r => r.id), ['1'])
+    })
     test('fresh successful snapshots are reused while stale, unknown, and failed paths refresh', async () => {
       const now = 20000
       const fresh = Path.resolve('fresh')
@@ -480,13 +581,13 @@ async function main() {
     test('scans are coalesced, deduplicated, and concurrency-limited', async () => {
       let active = 0, peak = 0, calls = 0
       const monitor = new Monitor(async () => { calls++; active++; peak = Math.max(peak, active); await sleep(5); active--; return snap(1) }, () => {})
-      monitor.setPaths([1, 2, 3, 4, 1].map(n => Path.resolve(`fixture/${n}`)))
+      monitor.setPaths([1, 2, 3, 4, 5, 6, 1].map(n => Path.resolve(`fixture/${n}`)))
       const first = monitor.refresh(); const second = monitor.refresh(); const third = monitor.refresh()
       Assert.notEqual(first, second); Assert.equal(second, third)
       await first
-      Assert.equal(calls, 4)
+      Assert.equal(calls, 6)
       await second
-      Assert.equal(calls, 8); Assert.equal(peak, 2)
+      Assert.equal(calls, 12); Assert.equal(peak, 4)
     })
     test('requests during a pass run one follow-up with the strictest window', async () => {
       let clock = 50000

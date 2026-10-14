@@ -1,5 +1,6 @@
 import {
   WorkingGroup,
+  RecentGroup,
   Ungrouped,
   repositoryOrganizationPath,
 } from './organization'
@@ -31,6 +32,19 @@ export interface IActivityRow {
   readonly needsDisambiguation: boolean
 }
 
+/** Prefix for the item ids of Recent rows, which duplicate saved rows. */
+export const RecentItemIdPrefix = 'recent:'
+
+/** The id of the saved row that a Recent row duplicates. */
+export function savedItemId(id: string): string {
+  return id.startsWith(RecentItemIdPrefix)
+    ? id.slice(RecentItemIdPrefix.length)
+    : id
+}
+
+/** The maximum number of repositories in the derived Recent section. */
+export const RecentLimit = 3
+
 export interface IActivityListGroup<T, G> {
   readonly identifier: G
   readonly items: ReadonlyArray<T>
@@ -47,12 +61,6 @@ function organizationPath(row: IActivityRow): string {
   )
 }
 
-export function activityIsUnknown(
-  activity: IRepositoryActivity | undefined
-): boolean {
-  return activity === undefined || activity.error || activity.checkedAt === 0
-}
-
 /**
  * The last known activity, including restored or failed checks that preserve
  * earlier values. A failure without an earlier baseline carries no data.
@@ -61,6 +69,11 @@ function lastKnownActivity(
   activity: IRepositoryActivity | undefined
 ): IRepositoryActivity | undefined {
   return activity?.error && activity.fingerprint === '' ? undefined : activity
+}
+
+/** The newest known change or commit time, or zero when there is none. */
+function activityTime(activity: IRepositoryActivity | undefined): number {
+  return Math.max(activity?.lastChangedAt ?? 0, activity?.lastCommitAt ?? 0)
 }
 
 /**
@@ -113,18 +126,6 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       : activity.unpushedCount ?? row.aheadBehind?.ahead
   }
   const dirty = (row: T) => changedFilesCount(row) > 0
-  const unknown = (row: T) => {
-    const activity = snapshot(row)
-    return (
-      activityIsUnknown(activity) &&
-      !(activity && indicatorIsNewer(row, activity))
-    )
-  }
-  const include = (row: T) =>
-    !preferences.onlyUncommitted ||
-    row.repository.id < 0 ||
-    dirty(row) ||
-    unknown(row)
 
   const annotate = (row: T): T => {
     if (lastKnownActivity(snapshot(row)) === undefined) {
@@ -148,19 +149,12 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       family.push(annotate(item))
       byRepository.set(item.repository.id, family)
     }
-    return [...byRepository.values()]
-      .map(rows => {
-        const visible = rows.filter(include)
-        if (visible.length === 0) {
-          return []
-        }
-        const root = rows.find(row => row.worktree?.type !== 'linked')
-        // Keep a clean parent as context for a matching linked worktree.
-        return root === undefined
-          ? visible
-          : [root, ...visible.filter(row => row !== root)]
-      })
-      .filter(rows => rows.length > 0)
+    return [...byRepository.values()].map(rows => {
+      const root = rows.find(row => row.worktree?.type !== 'linked')
+      return root === undefined
+        ? rows
+        : [root, ...rows.filter(row => row !== root)]
+    })
   }
 
   if (preferences.sort === 'name' && organization === undefined) {
@@ -192,15 +186,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     )
   }
   const latest = (rows: ReadonlyArray<T>) =>
-    rows.reduce(
-      (time, row) =>
-        Math.max(
-          time,
-          snapshot(row)?.lastChangedAt ?? 0,
-          snapshot(row)?.lastCommitAt ?? 0
-        ),
-      0
-    )
+    rows.reduce((time, row) => Math.max(time, activityTime(snapshot(row))), 0)
   const compareRows = (a: T, b: T) => {
     const changed =
       preferences.sort === 'dirty-first' || !organization
@@ -251,8 +237,26 @@ export function projectActivityGroups<T extends IActivityRow, G>(
       .filter(row => dirty(row) || (unpushedCount(row) ?? 0) > 0)
       .map(row => row.repository.id)
   )
+  const savedGroupName = (row: T) =>
+    organization.groups.find(
+      g => g.id === organization.assignments[organizationPath(row)]
+    )?.name ?? 'Ungrouped'
+  // Recent is also derived: the newest repositories outside Working, always
+  // newest first. Unlike Working, its rows also remain in their saved group,
+  // so they get distinct item ids while still referring to the same
+  // repository.
+  const recent = annotated
+    .filter(row => !working.has(row.repository.id) && latest([row]) > 0)
+    .sort((a, b) => latest([b]) - latest([a]) || compareNames(a, b))
+    .slice(0, RecentLimit)
+    .map(row => ({
+      ...row,
+      id: `${RecentItemIdPrefix}${row.id}`,
+      recentGroupName: savedGroupName(row),
+    }))
   const buckets = new Map<string, T[]>([
     [WorkingGroup, []],
+    [RecentGroup, recent],
     ...organization.groups.map(g => [g.id, []] as [string, T[]]),
     [Ungrouped, []],
   ])
@@ -262,8 +266,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
     if (working.has(row.repository.id)) {
       buckets.get(WorkingGroup)!.push({
         ...row,
-        workingGroupName:
-          organization.groups.find(g => g.id === assigned)?.name ?? 'Ungrouped',
+        workingGroupName: savedGroupName(row),
       })
     } else {
       buckets.get(target)!.push(row)
@@ -275,7 +278,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   return [...buckets].map(([identifier, items]) => ({
     identifier: identifier as G,
     items:
-      identifier === WorkingGroup
+      identifier === WorkingGroup || identifier === RecentGroup
         ? items
         : families(items).flatMap(block => {
             const root = block.find(row => row.worktree?.type !== 'linked')
@@ -283,6 +286,33 @@ export function projectActivityGroups<T extends IActivityRow, G>(
             return root ? [root, ...children] : children
           }),
   }))
+}
+
+/**
+ * The paths an activity pass should check first: the selected repository,
+ * then the Working rows of `projected`, then the other rows by last known
+ * activity, newest first. Rows without known activity are left out, so the
+ * monitor checks them last in registration order.
+ */
+export function activityScanPriority<T extends IActivityRow, G>(
+  projected: ReadonlyArray<IActivityListGroup<T, G>>,
+  activities: ReadonlyMap<string, IRepositoryActivity>,
+  selectedPath: string | null
+): ReadonlyArray<string> {
+  const time = (row: T) =>
+    activityTime(activities.get(activityKey(activityPath(row))))
+  const byTime = (rows: ReadonlyArray<T>) =>
+    [...rows].sort((a, b) => time(b) - time(a))
+  const working = projected.find(g => g.identifier === WorkingGroup)
+  const others = projected
+    .filter(g => g !== working)
+    .flatMap(g => g.items)
+    .filter(row => time(row) > 0)
+  return [
+    ...(selectedPath === null ? [] : [selectedPath]),
+    ...byTime(working?.items ?? []).map(activityPath),
+    ...byTime(others).map(activityPath),
+  ]
 }
 
 /** Restore activity order after text matching has ranked results by score. */

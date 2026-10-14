@@ -2,7 +2,6 @@ import type { IRepositoryActivity } from './status'
 
 export type ActivitySort = 'name' | 'dirty-first' | 'recent'
 export interface IActivityPreferences {
-  readonly onlyUncommitted: boolean
   readonly sort: ActivitySort
 }
 
@@ -39,15 +38,13 @@ export function readActivityPreferences(
       typeof value === 'object' &&
       isActivitySort(value.sort)
     ) {
-      return {
-        sort: value.sort,
-        onlyUncommitted: value.onlyUncommitted === true,
-      }
+      // Other stored fields, such as the removed `onlyUncommitted`, are ignored.
+      return { sort: value.sort }
     }
   } catch {
     // Restricted or malformed storage must not make the repository list fail.
   }
-  return { sort: 'recent', onlyUncommitted: false }
+  return { sort: 'recent' }
 }
 
 export function saveActivityPreferences(

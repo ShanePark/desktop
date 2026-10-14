@@ -49,6 +49,9 @@ class Monitor {
   invalidate(paths) {
     this.invalidated.push(paths)
   }
+  setPriority(priority) {
+    this.priority = priority
+  }
   setPaths(paths) {
     const changed = JSON.stringify(paths) !== JSON.stringify(this.paths)
     this.paths = paths
@@ -122,8 +125,6 @@ function load(path) {
     if (target.endsWith('/models/popup'))
       return { PopupType: { RepositoryGroupEditor: 'RepositoryGroupEditor' } }
     if (target.endsWith('/models/repository')) return { Repository }
-    if (target.endsWith('/lib/checkbox'))
-      return { Checkbox: 'Checkbox', CheckboxValue: { On: 'on', Off: 'off' } }
     if (target.endsWith('/lib/popover'))
       return {
         Popover: 'Popover',
@@ -268,7 +269,7 @@ const { RepositoryGroupDialog } = load(
 const { activityKey } = load(
   Path.join(root, 'app/src/lib/repository-activity/status.ts')
 )
-const { WorkingGroup } = load(
+const { WorkingGroup, RecentGroup } = load(
   Path.join(root, 'app/src/lib/repository-activity/organization.ts')
 )
 const repositories = rows.map(r => r.repository)
@@ -326,6 +327,16 @@ test('picker opts into recent-local-change ordering and renders compact options'
     popover.props.children[1].props.children[0].props.children[0],
     'Sort by'
   )
+  // Only the three Sort by modes remain; Uncommitted only was removed.
+  Assert.equal(popover.props.children.length, 2)
+  Assert.deepEqual(
+    popover.props.children[1].props.children.slice(1).map(r => r.props.value),
+    ['recent', 'dirty-first', 'name']
+  )
+  Assert.equal(
+    toolbar.render().props.children[0].props.className,
+    'repository-activity-options-button'
+  )
 })
 test('activity checks avoid UI updates when only checkedAt changes', () => {
   const activityList = new RepositoriesList(props)
@@ -366,7 +377,7 @@ test('activity checks avoid UI updates when only checkedAt changes', () => {
 })
 test('mount scans every registered repository despite active filters', () => {
   picker.props = { ...props, filterText: 'z-project' }
-  picker.onActivityPreferencesChanged({ sort: 'recent', onlyUncommitted: true })
+  picker.onActivityPreferencesChanged({ sort: 'recent' })
   picker.componentDidMount()
   Assert.deepEqual(
     picker.activityMonitor.paths,
@@ -374,6 +385,46 @@ test('mount scans every registered repository despite active filters', () => {
   )
   Assert.equal(picker.activityMonitor.refreshes, 1)
   Assert.deepEqual(picker.activityMonitor.refreshOptions, [{ maxAge: 0 }])
+})
+test('activity passes check the selected repository first, then Working', () => {
+  const [working, selected] = repositories
+  const list = new RepositoriesList({ ...props, selectedRepository: selected })
+  // Repositories without known activity are left to registration order.
+  list.activityMonitor.notify({
+    repositories: new Map(),
+    checking: false,
+    completed: 0,
+    total: 2,
+  })
+  Assert.deepEqual(list.activityMonitor.priority(), [selected.path])
+  list.activityMonitor.notify({
+    repositories: new Map([[activityKey(working.path), snapshot(2)]]),
+    checking: false,
+    completed: 1,
+    total: 2,
+  })
+  Assert.deepEqual(list.activityMonitor.priority(), [
+    selected.path,
+    working.path,
+  ])
+})
+test('a failed recheck of a restored result is described as unavailable', () => {
+  const list = new RepositoriesList(props)
+  const path = repositories[0].path
+  const describe = activity => {
+    list.activityMonitor.notify({
+      repositories: new Map([[activityKey(path), activity]]),
+      checking: false,
+      completed: 1,
+      total: 2,
+    })
+    return list.getActivityDescription(row(repositories[0]))
+  }
+  Assert.match(describe({ ...snapshot(1), checkedAt: 0 }), /waiting/)
+  Assert.match(
+    describe({ ...snapshot(1), checkedAt: 0, error: true }),
+    /unavailable/
+  )
 })
 test('reopening reuses verified session snapshots before the background refresh', () => {
   const cached = new Map(
@@ -505,7 +556,7 @@ test('a replaced app-store lookup updates the open picker before the recheck', (
   const savedStorage = new Map(storage)
   const list = new RepositoriesList(props)
   list.setState({
-    activityPreferences: { sort: 'recent', onlyUncommitted: false },
+    activityPreferences: { sort: 'recent' },
   })
   // Restored from the previous session: dirty and unpushed, not yet verified.
   list.activityMonitor.notify({
@@ -517,10 +568,11 @@ test('a replaced app-store lookup updates the open picker before the recheck', (
     total: 2,
   })
   const render = () => list.render().props.children[0].props.groups
+  // An empty Working section is hidden.
   const working = () =>
-    render()
-      .find(group => group.identifier === WorkingGroup)
-      .items.map(item => [item.repository.id, item.changedFilesCount])
+    (
+      render().find(group => group.identifier === WorkingGroup)?.items ?? []
+    ).map(item => [item.repository.id, item.changedFilesCount])
   const update = lookup => {
     const prevProps = list.props
     list.props = { ...prevProps, localRepositoryStateLookup: lookup }
@@ -570,27 +622,39 @@ test('a replaced app-store lookup updates the open picker before the recheck', (
   storage.clear()
   savedStorage.forEach((value, key) => storage.set(key, value))
 })
-test('activity filter hides known-clean rows without dropping name search', () => {
+test('name search applies to Recent rows and hides empty headings', () => {
   picker.activityMonitor.notify({
     repositories: new Map(
-      repositories.map((r, i) => [activityKey(r.path), snapshot(i)])
+      repositories.map((r, i) => [
+        activityKey(r.path),
+        { ...snapshot(i), lastCommitAt: 500 },
+      ])
     ),
     checking: false,
     completed: 2,
     total: 2,
   })
+  const props = listElement().props
+  Assert.equal(props.filterText, 'z-project')
+  Assert.equal(props.showEmptyGroups, true)
   Assert.deepEqual(
-    listElement().props.groups[0].items.map(r => r.repository.id),
-    [2]
+    props.groups.map(g => [g.identifier, g.items.map(r => r.id)]),
+    [
+      [WorkingGroup, ['2']],
+      [RecentGroup, ['recent:1']],
+      ['group-shane', []],
+      ['_Ungrouped_', ['1']],
+    ]
   )
-  Assert.equal(listElement().props.filterText, 'z-project')
-  Assert.equal(listElement().props.selectedItem, null)
+  const searched = new SectionFilterList(props)
+  Assert.deepEqual(
+    searched.state.rows.map(section => section[0].identifier),
+    [RecentGroup, '_Ungrouped_']
+  )
+  Assert.deepEqual(visible(searched), ['recent:1', '1'])
 })
 test('keyboard selection survives transitions between Working and its saved group', () => {
-  picker.onActivityPreferencesChanged({
-    sort: 'recent',
-    onlyUncommitted: false,
-  })
+  picker.onActivityPreferencesChanged({ sort: 'recent' })
   picker.onListSelectionChanged(rows[1])
   picker.setState({ activity: { ...picker.state.activity, checking: true } })
   Assert.equal(listElement().props.selectedItem.id, '2')
@@ -612,13 +676,16 @@ test('keyboard selection survives transitions between Working and its saved grou
       1
     )
     Assert.equal(
-      list.props.groups[0].items.some(item => item.repository.id === repositories[1].id),
+      (
+        list.props.groups.find(group => group.identifier === WorkingGroup)
+          ?.items ?? []
+      ).some(item => item.repository.id === repositories[1].id),
       count > 0
     )
   }
 })
 test('name sort preserves filter order across groups during search', () => {
-  picker.onActivityPreferencesChanged({ sort: 'name', onlyUncommitted: false })
+  picker.onActivityPreferencesChanged({ sort: 'name' })
   Assert.equal(listElement().props.preserveItemOrder, true)
   Assert.equal(listElement().props.groups[0].identifier, '_Working_')
 })
@@ -817,9 +884,12 @@ test('group reorder persists, preserves assignments, and keeps fixed sections at
     new RepositoriesList(props).state.organization.groups,
     picker.state.organization.groups
   )
-  const groups = listElement().props.groups
-  Assert.equal(groups[0].identifier, '_Working_')
-  Assert.equal(groups[groups.length - 1].identifier, '_Ungrouped_')
+  // Working and Recent are empty here, so they are hidden; when shown they
+  // always precede the custom groups (see the projection tests).
+  Assert.deepEqual(
+    listElement().props.groups.map(g => g.identifier),
+    ['group-c', 'group-b', 'group-a', '_Ungrouped_']
+  )
   Assert.equal(moveRepositoryGroup(value, 'group-a', '_Working_'), value)
   Assert.equal(moveRepositoryGroup(value, '_Working_', 'group-a'), value)
   Assert.equal(moveRepositoryGroup(value, 'group-a', 'group-a'), value)
@@ -833,12 +903,15 @@ test('collapse survives recreation and reordering without changing membership', 
     currentTarget: { dataset: { group: id } },
     stopPropagation() {},
   })
-  picker.onGroupToggle({
-    currentTarget: { dataset: { group: '_Working_' } },
-    stopPropagation() {},
-  })
+  // Working and Recent cannot be collapsed.
+  for (const derived of ['_Working_', '_Recent_']) {
+    picker.onGroupToggle({
+      currentTarget: { dataset: { group: derived } },
+      stopPropagation() {},
+    })
+  }
   const fresh = new RepositoriesList(props)
-  Assert.deepEqual(fresh.state.organization.collapsed, [id, '_Working_'])
+  Assert.deepEqual(fresh.state.organization.collapsed, [id])
   Assert.deepEqual(fresh.state.organization.assignments, original.assignments)
   const {
     moveRepositoryGroup,
@@ -847,20 +920,21 @@ test('collapse survives recreation and reordering without changing membership', 
   } = load(Path.join(root, 'app/src/lib/repository-activity/organization.ts'))
   Assert.deepEqual(
     moveRepositoryGroup(fresh.state.organization, id, '_Ungrouped_').collapsed,
-    [id, '_Working_']
+    [id]
   )
   Assert.deepEqual(
     removeRepositoryGroup(fresh.state.organization, id).collapsed,
-    ['_Working_']
+    []
   )
+  // A collapsed Working state stored by an earlier version is ignored.
   const invalid = {
     ...fresh.state.organization,
-    collapsed: [id, id, '_Working_', 'unknown', 2],
+    collapsed: [id, id, '_Working_', '_Recent_', '_Ungrouped_', 'unknown', 2],
   }
   Assert.deepEqual(
     readRepositoryOrganization({ getItem: () => JSON.stringify(invalid) })
       .collapsed,
-    [id, '_Working_']
+    [id, '_Ungrouped_']
   )
   picker.updateOrganization(original)
 })
@@ -1221,20 +1295,30 @@ test('list-wide slots are available only for custom group drags', () => {
   Assert.equal(find(rows, 290, 'group-a', null).group, 'group-b')
   Assert.equal(find(rows, 290, 'group-a', null).position, 'after')
 })
-test('list-wide group drop slots reject Working', () => {
+test('list-wide group drop slots reject Working and Recent', () => {
   const { findRepositoryDropSlot: find } = load(
     Path.join(root, 'app/src/lib/repository-activity/drag.ts')
   )
   const rows = [
     { top: 0, bottom: 29, group: '_Working_' },
     { top: 29, bottom: 58, group: '_Working_', repositoryId: 1 },
-    { top: 58, bottom: 87, group: 'group-a' },
-    { top: 87, bottom: 116, group: 'group-a', repositoryId: 2 },
-    { top: 116, bottom: 145, group: '_Ungrouped_' },
+    { top: 58, bottom: 87, group: '_Recent_' },
+    { top: 87, bottom: 116, group: '_Recent_', repositoryId: 2 },
+    { top: 116, bottom: 145, group: 'group-a' },
+    { top: 145, bottom: 174, group: 'group-a', repositoryId: 2 },
+    { top: 174, bottom: 203, group: '_Ungrouped_' },
   ]
   Assert.equal(find(rows, 10, 'group-a', null), null)
   Assert.equal(find(rows, 45, 'group-a', null), null)
-  Assert.equal(find(rows, 90, null, 2), null)
+  Assert.equal(find(rows, 70, 'group-a', null), null)
+  Assert.equal(find(rows, 100, 'group-a', null), null)
+  Assert.equal(find(rows, 150, null, 2), null)
+  // The nearest slot below Recent is before the first custom group.
+  Assert.deepEqual(find(rows, 117, 'group-b', null), {
+    group: 'group-a',
+    y: 116,
+    position: 'before',
+  })
 })
 test('repository drags never resolve list-wide source slots', () => {
   const { findRepositoryDropSlot: find } = load(
@@ -1393,6 +1477,222 @@ test('group drag preview keeps virtualized headers in their layout slots', () =>
     picker.onRepositoryDragEnd()
     picker.updateOrganization(originalOrganization)
   }
+})
+/** Depth-first search of a stubbed React element tree. */
+const findElements = (node, predicate, found = []) => {
+  if (Array.isArray(node)) {
+    node.forEach(child => findElements(child, predicate, found))
+  } else if (node && typeof node === 'object' && node.props) {
+    if (predicate(node)) found.push(node)
+    findElements(node.props.children, predicate, found)
+  }
+  return found
+}
+const hasClass = name => node =>
+  typeof node.props.className === 'string' &&
+  node.props.className.split(' ').includes(name)
+/** Clean repositories whose latest commits make both of them Recent. */
+const notifyRecent = (counts = [0, 0]) =>
+  picker.activityMonitor.notify({
+    repositories: new Map(
+      repositories.map((r, i) => [
+        activityKey(r.path),
+        { ...snapshot(counts[i]), lastCommitAt: 500 - i * 100 },
+      ])
+    ),
+    checking: false,
+    completed: 2,
+    total: 2,
+  })
+const section = id =>
+  listElement().props.groups.find(group => group.identifier === id)
+test('Working and Recent headers have no collapse toggle and are labeled', () => {
+  picker.props = { ...props, filterText: '' }
+  for (const [id, label] of [
+    [WorkingGroup, 'Working'],
+    [RecentGroup, 'Recent'],
+  ]) {
+    const header = picker.renderGroupHeader(id)
+    Assert.equal(findElements(header, hasClass('repository-group-toggle')).length, 0)
+    Assert.equal(header.props.draggable, false)
+    Assert.ok(header.props.className.split(' ').includes('repository-derived-group'))
+    Assert.ok(!header.props.className.split(' ').includes('repository-custom-group'))
+    const title = findElements(header, hasClass('repository-group-title'))
+    Assert.equal(title.length, 1)
+    Assert.equal(
+      findElements(title, hasClass('repository-group-label'))[0].props
+        .children[0],
+      label
+    )
+    Assert.ok(!header.props['aria-label'].includes('drag a repository here'))
+  }
+  const custom = picker.renderGroupHeader(picker.state.organization.groups[0].id)
+  Assert.equal(findElements(custom, hasClass('repository-group-toggle')).length, 1)
+  const ungrouped = picker.renderGroupHeader('_Ungrouped_')
+  Assert.equal(findElements(ungrouped, hasClass('repository-group-toggle')).length, 1)
+})
+test('empty Working and Recent sections are hidden', () => {
+  picker.props = { ...props, filterText: '' }
+  const derived = () =>
+    listElement()
+      .props.groups.map(group => group.identifier)
+      .filter(id => id === WorkingGroup || id === RecentGroup)
+  notifyRecent([0, 0])
+  Assert.deepEqual(derived(), [RecentGroup])
+  Assert.equal(listElement().props.groups[0].identifier, RecentGroup)
+  notifyRecent([1, 0])
+  Assert.deepEqual(derived(), [WorkingGroup, RecentGroup])
+  Assert.deepEqual(section(RecentGroup).items.map(r => r.id), ['recent:2'])
+  notifyRecent([1, 1])
+  Assert.deepEqual(derived(), [WorkingGroup])
+  // Neither section has rows: no empty box or headings remain.
+  picker.activityMonitor.notify({
+    repositories: new Map(
+      repositories.map(r => [activityKey(r.path), snapshot(0)])
+    ),
+    checking: false,
+    completed: 2,
+    total: 2,
+  })
+  Assert.deepEqual(derived(), [])
+  Assert.ok(listElement().props.groups.length > 0)
+  Assert.equal(picker.groupCounts.get(WorkingGroup), 0)
+  Assert.equal(picker.groupCounts.get(RecentGroup), 0)
+})
+test('Recent rows open their repository, show the saved group, and highlight both copies', () => {
+  let opened = null
+  picker.props = {
+    ...props,
+    filterText: '',
+    onSelectionChanged: repository => {
+      opened = repository
+    },
+    dispatcher: { ...props.dispatcher, recordRepoClicked() {} },
+  }
+  picker.setState({ selectedItem: null })
+  notifyRecent([0, 0])
+  const recent = section(RecentGroup).items
+  Assert.deepEqual(recent.map(r => r.id), ['recent:1', 'recent:2'])
+  const saved = listElement()
+    .props.groups.filter(g => g.identifier !== RecentGroup)
+    .flatMap(g => g.items)
+  Assert.deepEqual(saved.map(r => r.id).sort(), ['1', '2'])
+  const savedRow = id => saved.find(r => r.id === id)
+  const className = item => listElement().props.getItemClassName(item)
+
+  // Without a keyboard selection the first copy of the selected repository is
+  // the anchor; its other copy is highlighted too.
+  Assert.equal(listElement().props.selectedItem.id, 'recent:1')
+  Assert.equal(className(recent[0]), undefined)
+  Assert.equal(className(savedRow('1')), 'repository-selected-duplicate')
+  Assert.equal(className(recent[1]), undefined)
+  Assert.equal(className(savedRow('2')), undefined)
+  // The list maps the selection to the anchor row only, not the last copy.
+  const list = new SectionFilterList(listElement().props)
+  const selected = list.state.rows[list.state.selectedRow.section][list.state.selectedRow.row]
+  Assert.equal(selected.item.id, 'recent:1')
+
+  // Keyboard selection on the saved copy keeps that row as the anchor.
+  picker.onListSelectionChanged(savedRow('1'))
+  Assert.equal(listElement().props.selectedItem.id, '1')
+  Assert.equal(className(recent[0]), 'repository-selected-duplicate')
+  Assert.equal(className(savedRow('1')), undefined)
+
+  // A selected Recent row follows its repository when it leaves Recent.
+  picker.onListSelectionChanged(recent[1])
+  Assert.equal(listElement().props.selectedItem.id, 'recent:2')
+  notifyRecent([0, 1])
+  Assert.equal(listElement().props.selectedItem.id, '2')
+  Assert.equal(section(WorkingGroup).items[0].id, '2')
+  notifyRecent([0, 0])
+
+  // Activating a Recent row opens that repository.
+  picker.suppressClickUntil = 0
+  picker.onItemClick(recent[0], { kind: 'mouseclick' })
+  Assert.equal(opened, repositories[0])
+
+  // The row carries the saved group tag and rejects drops onto Recent.
+  const element = picker.renderItem(recent[0], {})
+  Assert.equal(element.props['data-owner-group'], RecentGroup)
+  Assert.equal(element.props['data-item-id'], 'recent:1')
+  Assert.equal(element.props.draggable, true)
+  const tag = findElements(element, hasClass('repository-working-group'))
+  Assert.equal(tag.length, 1)
+  Assert.equal(tag[0].props.tooltip, `Group: ${recent[0].recentGroupName}`)
+  Assert.match(
+    picker.getItemAriaLabel(recent[0]),
+    new RegExp(`^z-project, group ${recent[0].recentGroupName}, `)
+  )
+  Assert.equal(
+    findElements(picker.renderItem(savedRow('1'), {}), hasClass('repository-working-group')).length,
+    0
+  )
+  picker.setState({ selectedItem: null })
+  picker.props = { ...props, filterText: '' }
+})
+test('Recent is never a repository or group drop target', () => {
+  const original = picker.state.organization
+  const group = original.groups[0].id
+  picker.updateOrganization({
+    ...original,
+    assignments: { [repositories[0].path]: group },
+  })
+  const before = JSON.stringify(picker.state.organization)
+  const event = dataset => ({
+    currentTarget: {
+      dataset,
+      getBoundingClientRect: () => ({ top: 0, height: 29 }),
+    },
+    target: {
+      closest: selector =>
+        selector === '.repository-activity-row'
+          ? { dataset: { ownerGroup: RecentGroup } }
+          : null,
+    },
+    clientY: 20,
+    dataTransfer: { dropEffect: '' },
+    preventDefault() {
+      this.prevented = true
+    },
+    stopPropagation() {},
+  })
+
+  // Repository drags onto the Recent heading, a Recent row, or its body.
+  picker.draggedRepository = repositories[1].id
+  const header = event({ group: RecentGroup })
+  picker.onGroupDragOver(header)
+  Assert.equal(header.dataTransfer.dropEffect, 'none')
+  Assert.equal(header.prevented, undefined)
+  Assert.equal(picker.state.dropGroup, null)
+  picker.onGroupDrop(event({ group: RecentGroup }))
+  Assert.equal(JSON.stringify(picker.state.organization), before)
+  picker.draggedRepository = repositories[1].id
+  const rowEvent = event({
+    repositoryId: String(repositories[0].id),
+    working: 'false',
+    ownerGroup: RecentGroup,
+  })
+  picker.onRepositoryDragOver(rowEvent)
+  Assert.equal(rowEvent.dataTransfer.dropEffect, 'none')
+  picker.onRepositoryDrop(rowEvent)
+  Assert.equal(JSON.stringify(picker.state.organization), before)
+  picker.draggedRepository = repositories[1].id
+  picker.onListDrop(event({}))
+  Assert.equal(JSON.stringify(picker.state.organization), before)
+
+  // Dragging a Recent row onto a custom group assigns its repository.
+  picker.draggedRepository = repositories[1].id
+  picker.onGroupDrop(event({ group }))
+  Assert.equal(picker.state.organization.assignments[repositories[1].path], group)
+
+  // Group reordering cannot target Recent either.
+  picker.draggedGroup = group
+  const groupDrag = event({ group: RecentGroup })
+  picker.onGroupDragOver(groupDrag)
+  Assert.equal(groupDrag.prevented, undefined)
+  Assert.equal(picker.state.dropGroup, null)
+  picker.onRepositoryDragEnd()
+  picker.updateOrganization(original)
 })
 test('ticks use half the interval as their freshness window', () => {
   const before = picker.activityMonitor.refreshes

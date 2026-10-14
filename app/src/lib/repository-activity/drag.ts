@@ -1,4 +1,4 @@
-import { WorkingGroup, Ungrouped } from './organization'
+import { isDerivedGroup, Ungrouped } from './organization'
 
 export interface IRepositoryDragRow {
   readonly top: number
@@ -27,11 +27,11 @@ export function findRepositoryDropSlot(
     return null
   }
 
-  // Working is a derived section, so neither repositories nor groups can be
-  // dropped anywhere inside its visible header or rows.
+  // Working and Recent are derived sections, so neither repositories nor
+  // groups can be dropped anywhere inside their visible headers or rows.
   if (
     rows.some(
-      row => row.group === WorkingGroup && y >= row.top && y < row.bottom
+      row => isDerivedGroup(row.group) && y >= row.top && y < row.bottom
     )
   ) {
     return null
@@ -47,7 +47,7 @@ export function findRepositoryDropSlot(
     })
   }
   for (const [group, bounds] of sections) {
-    if (group === WorkingGroup || group === draggingGroup) {
+    if (isDerivedGroup(group) || group === draggingGroup) {
       continue
     }
     slots.push({ group, y: bounds.top, position: 'before' })

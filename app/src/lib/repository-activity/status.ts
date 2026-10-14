@@ -13,7 +13,11 @@ export interface IActivitySample {
 
 export interface IRepositoryActivity extends IActivitySample {
   readonly lastChangedAt: number | null
-  /** Zero means a restored, not yet revalidated cache entry. */
+  /**
+   * When these values were checked. Zero means a restored, not yet
+   * revalidated cache entry. A failed check keeps the time of the values it
+   * preserves.
+   */
   readonly checkedAt: number
   readonly error: boolean
 }

@@ -2,9 +2,16 @@ import { activityKey } from './status'
 import type { IActivityStorage } from './preferences'
 
 export const WorkingGroup = '_Working_'
+/** Recently active repositories outside Working. Not the upstream 'recent' kind. */
+export const RecentGroup = '_Recent_'
 export const Ungrouped = '_Ungrouped_'
 export const RepositoryGroupsChangedEvent = 'repository-groups-changed'
 const StorageKey = 'desktop.repository-groups.v1'
+
+/** Working and Recent are derived views: never assignable or collapsible. */
+export function isDerivedGroup(id: string): boolean {
+  return id === WorkingGroup || id === RecentGroup
+}
 
 export interface IRepositoryOrganization {
   readonly groups: ReadonlyArray<{ readonly id: string; readonly name: string }>
@@ -73,7 +80,7 @@ export function readRepositoryOrganization(
                     value.collapsed.filter(
                       (id: unknown): id is string =>
                         typeof id === 'string' &&
-                        (ids.has(id) || id === WorkingGroup || id === Ungrouped)
+                        (ids.has(id) || id === Ungrouped)
                     )
                   )
                 ),
@@ -141,7 +148,7 @@ export function validateRepositoryGroupName(
   if (name.trim().length > 80) {
     return 'Use 80 characters or fewer.'
   }
-  if (['working', 'ungrouped'].includes(normalized)) {
+  if (['working', 'recent', 'ungrouped'].includes(normalized)) {
     return 'This name is reserved. Choose another group name.'
   }
   if (
@@ -185,11 +192,7 @@ export function toggleRepositoryGroup(
   value: IRepositoryOrganization,
   id: string
 ): IRepositoryOrganization {
-  if (
-    id !== WorkingGroup &&
-    id !== Ungrouped &&
-    !value.groups.some(g => g.id === id)
-  ) {
+  if (id !== Ungrouped && !value.groups.some(g => g.id === id)) {
     return value
   }
   const collapsed = value.collapsed ?? []

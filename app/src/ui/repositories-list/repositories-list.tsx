@@ -42,8 +42,10 @@ import {
 import { activityKey } from '../../lib/repository-activity/status'
 import type { IRepositoryActivity } from '../../lib/repository-activity/status'
 import {
+  activityScanPriority,
   indicatorIsNewer,
   projectActivityGroups,
+  savedItemId,
 } from '../../lib/repository-activity/list'
 import {
   IRepositoryOrganization,
@@ -55,6 +57,8 @@ import {
   toggleRepositoryGroup,
   repositoryOrganizationPath,
   WorkingGroup,
+  RecentGroup,
+  isDerivedGroup,
   RepositoryGroupsChangedEvent,
   Ungrouped,
 } from '../../lib/repository-activity/organization'
@@ -75,6 +79,14 @@ function repositoryOrganizationKey(repository: Repositoryish): string {
     repository.path,
     repository instanceof Repository ? repository.mainWorktreePath : undefined
   )
+}
+
+/** The derived section (Working or Recent) that renders this row, if any. */
+function derivedGroupOf(item: IRepositoryListItem): string | undefined {
+  if (item.workingGroupName !== undefined) {
+    return WorkingGroup
+  }
+  return item.recentGroupName !== undefined ? RecentGroup : undefined
 }
 
 interface IRepositoriesListProps {
@@ -232,6 +244,8 @@ export class RepositoriesList extends React.Component<
   private repositoryListElement: HTMLDivElement | null = null
   private groupDragImage: HTMLDivElement | null = null
   private groupCounts = new Map<string, number>()
+  /** The selection anchor from the last render. */
+  private selectedListItem: IRepositoryListItem | null = null
   private suppressClickUntil = 0
   private lastRenderedActivity: IActivityState
   /**
@@ -313,6 +327,7 @@ export class RepositoriesList extends React.Component<
       },
       initialActivity
     )
+    this.activityMonitor.setPriority(this.getActivityScanPriority)
   }
 
   public componentDidMount() {
@@ -397,6 +412,14 @@ export class RepositoriesList extends React.Component<
     }
   }
 
+  /** Check the rows a user is most likely waiting for first. */
+  private getActivityScanPriority = () =>
+    activityScanPriority(
+      this.projectGroups(),
+      this.state.activity.repositories,
+      this.props.selectedRepository?.path ?? null
+    )
+
   private refreshActivity = () => {
     void this.activityMonitor.refresh({ maxAge: ActivityTickFreshnessWindow })
   }
@@ -435,11 +458,12 @@ export class RepositoriesList extends React.Component<
     }
     // A newer app-store indicator supplies the displayed counts.
     if (!indicatorIsNewer(item, activity)) {
-      if (activity.checkedAt === 0) {
-        return 'Local activity: waiting for status check'
-      }
+      // A failed recheck of a restored result keeps its zero `checkedAt`.
       if (activity.error) {
         return 'Local activity: unavailable (not treated as clean)'
+      }
+      if (activity.checkedAt === 0) {
+        return 'Local activity: waiting for status check'
       }
     }
     const time =
@@ -456,12 +480,13 @@ export class RepositoriesList extends React.Component<
 
   private renderItem = (item: IRepositoryListItem, matches: IMatches) => {
     const repository = item.repository
+    const savedGroupName = item.workingGroupName ?? item.recentGroupName
     const ownerGroup =
-      item.workingGroupName !== undefined
-        ? WorkingGroup
-        : this.state.organization.assignments[
-            repositoryOrganizationKey(repository)
-          ] ?? Ungrouped
+      derivedGroupOf(item) ??
+      this.state.organization.assignments[
+        repositoryOrganizationKey(repository)
+      ] ??
+      Ungrouped
     return (
       <div
         key={item.id}
@@ -476,12 +501,12 @@ export class RepositoriesList extends React.Component<
         onDragStart={this.onRepositoryDragStart}
         onDragEnd={this.onRepositoryDragEnd}
       >
-        {item.workingGroupName !== undefined && (
+        {savedGroupName !== undefined && (
           <TooltippedContent
             className="repository-working-group"
-            tooltip={`Group: ${item.workingGroupName}`}
+            tooltip={`Group: ${savedGroupName}`}
           >
-            <span>{item.workingGroupName}</span>
+            <span>{savedGroupName}</span>
           </TooltippedContent>
         )}
         <TooltippedContent
@@ -579,6 +604,9 @@ export class RepositoriesList extends React.Component<
       if (identifier === WorkingGroup) {
         return 'Working'
       }
+      if (identifier === RecentGroup) {
+        return 'Recent'
+      }
       if (identifier === Ungrouped) {
         return 'Ungrouped'
       }
@@ -635,7 +663,8 @@ export class RepositoriesList extends React.Component<
     const isCustomGroup = this.state.organization.groups.some(
       group => group.id === id
     )
-    const canDrop = id !== WorkingGroup
+    // Derived sections are not drop targets and cannot be collapsed.
+    const derived = isDerivedGroup(id)
     const dropPreviewClass =
       this.draggedGroup !== null && this.state.dropGroup === id
         ? this.state.dropPosition
@@ -647,13 +676,19 @@ export class RepositoriesList extends React.Component<
       <div
         key={id}
         className={`filter-list-group-header${
-          isCustomGroup ? ' repository-custom-group' : ''
+          isCustomGroup
+            ? ' repository-custom-group'
+            : derived
+            ? ' repository-derived-group'
+            : ''
         }${dropPreviewClass}`}
         role="group"
         aria-label={
-          canDrop
-            ? `${label} — drag a repository here to assign it`
-            : 'Uncommitted changes or unpushed commits on the current branch'
+          id === WorkingGroup
+            ? 'Uncommitted changes or unpushed commits on the current branch'
+            : id === RecentGroup
+            ? 'Recently active repositories, also listed in their groups'
+            : `${label} — drag a repository here to assign it`
         }
         data-group={id}
         draggable={isCustomGroup}
@@ -669,28 +704,39 @@ export class RepositoriesList extends React.Component<
           onlyWhenOverflowed={true}
           tagName="div"
         >
-          <button
-            type="button"
-            className="repository-group-toggle"
-            data-group={id}
-            aria-expanded={!collapsed}
-            aria-disabled={searching}
-            aria-label={
-              searching
-                ? `${label}, expanded while searching`
-                : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
-            }
-            onClick={this.onGroupToggle}
-            onKeyDown={this.onGroupReorderKeyDown}
-          >
-            <Octicon
-              symbol={collapsed ? octicons.chevronRight : octicons.chevronDown}
-            />
-            <span className="repository-group-label">{label}</span>
-            <span className="repository-group-count">
-              {this.groupCounts.get(id) ?? 0}
-            </span>
-          </button>
+          {derived ? (
+            <div className="repository-group-title">
+              <span className="repository-group-label">{label}</span>
+              <span className="repository-group-count">
+                {this.groupCounts.get(id) ?? 0}
+              </span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="repository-group-toggle"
+              data-group={id}
+              aria-expanded={!collapsed}
+              aria-disabled={searching}
+              aria-label={
+                searching
+                  ? `${label}, expanded while searching`
+                  : `${collapsed ? 'Expand' : 'Collapse'} ${label}`
+              }
+              onClick={this.onGroupToggle}
+              onKeyDown={this.onGroupReorderKeyDown}
+            >
+              <Octicon
+                symbol={
+                  collapsed ? octicons.chevronRight : octicons.chevronDown
+                }
+              />
+              <span className="repository-group-label">{label}</span>
+              <span className="repository-group-count">
+                {this.groupCounts.get(id) ?? 0}
+              </span>
+            </button>
+          )}
         </TooltippedContent>
         {isCustomGroup && (
           <button
@@ -743,11 +789,23 @@ export class RepositoriesList extends React.Component<
       this.isRepositoryDragActive() &&
       (this.draggedRepository === item.repository.id ||
         this.state.draggedRepositoryId === item.repository.id)
+    const classNames = new Array<string>()
     // The saved group is dimmed as a whole. Keep a row-level affordance only
-    // for the derived Working row, which has no saved group container.
-    return isDraggedRepository && item.workingGroupName !== undefined
-      ? 'repository-drag-source'
-      : undefined
+    // for derived Working and Recent rows, which are outside that container.
+    if (isDraggedRepository && derivedGroupOf(item) !== undefined) {
+      classNames.push('repository-drag-source')
+    }
+    // A Recent row and its saved row are the same repository: highlight the
+    // other copy of the selection anchor as selected too.
+    const selected = this.selectedListItem
+    if (
+      selected !== null &&
+      selected.id !== item.id &&
+      savedItemId(selected.id) === savedItemId(item.id)
+    ) {
+      classNames.push('repository-selected-duplicate')
+    }
+    return classNames.length > 0 ? classNames.join(' ') : undefined
   }
 
   private getDraggedRepositoryGroup = () => {
@@ -847,7 +905,7 @@ export class RepositoriesList extends React.Component<
       source === undefined ||
       group === null ||
       group === undefined ||
-      group === WorkingGroup ||
+      isDerivedGroup(group) ||
       this.getRepositoryGroup(source) === group
     ) {
       event.dataTransfer.dropEffect = 'none'
@@ -888,7 +946,7 @@ export class RepositoriesList extends React.Component<
       source &&
       target &&
       group &&
-      group !== WorkingGroup &&
+      !isDerivedGroup(group) &&
       source.id !== target.id &&
       event.currentTarget.dataset.working !== 'true' &&
       this.getRepositoryGroup(source) !== group
@@ -922,7 +980,7 @@ export class RepositoriesList extends React.Component<
       return
     }
 
-    if (id && id !== WorkingGroup && this.draggedGroup !== null) {
+    if (id && !isDerivedGroup(id) && this.draggedGroup !== null) {
       event.preventDefault()
       event.stopPropagation()
       event.dataTransfer.dropEffect = 'move'
@@ -995,7 +1053,7 @@ export class RepositoriesList extends React.Component<
         r => r.id === this.draggedRepository
       )
       if (
-        id !== WorkingGroup &&
+        !isDerivedGroup(id) &&
         repository &&
         this.getRepositoryGroup(repository) !== id
       ) {
@@ -1313,7 +1371,7 @@ export class RepositoriesList extends React.Component<
       if (
         repository !== undefined &&
         group !== null &&
-        group !== WorkingGroup &&
+        !isDerivedGroup(group) &&
         this.getRepositoryGroup(repository) !== group
       ) {
         event.preventDefault()
@@ -1443,10 +1501,12 @@ export class RepositoriesList extends React.Component<
     ])
   }
 
-  private getItemAriaLabel = (item: IRepositoryListItem) =>
-    `${item.repository.name}${
-      item.workingGroupName ? `, group ${item.workingGroupName}` : ''
+  private getItemAriaLabel = (item: IRepositoryListItem) => {
+    const savedGroupName = item.workingGroupName ?? item.recentGroupName
+    return `${item.repository.name}${
+      savedGroupName ? `, group ${savedGroupName}` : ''
     }, ${this.getActivityDescription(item)}`
+  }
   private getGroupAriaLabelGetter =
     (
       groups: ReadonlyArray<
@@ -1456,34 +1516,51 @@ export class RepositoriesList extends React.Component<
     (group: number) =>
       this.getGroupLabel(groups[group].identifier)
 
-  public render() {
-    const originalGroups = this.getRepositoryGroups(
-      this.props.repositories,
-      this.props.localRepositoryStateLookup,
-      this.props.recentRepositories
-    )
-
-    const groups = projectActivityGroups<
+  private projectGroups() {
+    return projectActivityGroups<
       IRepositoryListItem,
       RepositoryGroupIdentifier
     >(
-      originalGroups,
+      this.getRepositoryGroups(
+        this.props.repositories,
+        this.props.localRepositoryStateLookup,
+        this.props.recentRepositories
+      ),
       this.state.activity.repositories,
       this.state.activityPreferences,
       '_LocalActivity_',
       this.state.organization
     )
+  }
+
+  public render() {
+    const projectedGroups = this.projectGroups()
     this.groupCounts = new Map(
-      groups.map(group => [
+      projectedGroups.map(group => [
         this.getGroupIdentifierKey(group.identifier),
         group.items.length,
       ])
     )
+    // Empty derived sections are hidden: they are never drop targets, so an
+    // empty heading (or an empty shared box) has no purpose.
+    const groups = projectedGroups.filter(
+      group =>
+        group.items.length > 0 ||
+        !isDerivedGroup(this.getGroupIdentifierKey(group.identifier))
+    )
+    // The selection anchor is the row the user last selected. If that row is
+    // gone (e.g. its repository left Recent), follow its repository to the
+    // copy that remains; otherwise use the first row of the selected
+    // repository. Other copies of the anchor are highlighted separately.
+    const items = groups.flatMap(group => group.items)
+    const anchorId = this.state.selectedItem?.id
     const selectedItem =
-      groups
-        .flatMap(group => group.items)
-        .find(item => item.id === this.state.selectedItem?.id) ??
+      (anchorId === undefined
+        ? undefined
+        : items.find(item => item.id === anchorId) ??
+          items.find(item => savedItemId(item.id) === savedItemId(anchorId))) ??
       this.getSelectedListItem(groups, this.props.selectedRepository)
+    this.selectedListItem = selectedItem
 
     return (
       <div
@@ -1495,7 +1572,7 @@ export class RepositoriesList extends React.Component<
       >
         <SectionFilterList<IRepositoryListItem, RepositoryGroupIdentifier>
           renderPreList={this.renderGroupError}
-          showEmptyGroups={!this.state.activityPreferences.onlyUncommitted}
+          showEmptyGroups={true}
           collapsedGroupIds={new Set(this.state.organization.collapsed ?? [])}
           rowHeight={RowHeight}
           selectedItem={selectedItem}
@@ -1566,11 +1643,7 @@ export class RepositoriesList extends React.Component<
     return (
       <div className="no-items no-results-found">
         <img src={BlankSlateImage} className="blankslate-image" alt="" />
-        <div className="title">
-          {this.state.activityPreferences.onlyUncommitted
-            ? 'No uncommitted repositories match the current filters'
-            : "Sorry, I can't find that repository"}
-        </div>
+        <div className="title">Sorry, I can't find that repository</div>
 
         <div className="protip">
           ProTip! Press{' '}

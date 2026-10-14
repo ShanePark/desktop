@@ -8,20 +8,32 @@ See [local development](local-development.md) for the fork's Git and Dock workfl
 
 ## Using the repository picker
 
-Open **Current Repository**. The list always shows these sections in order:
+Open **Current Repository**. The list shows these sections in order:
 
 - **Working**: repositories with uncommitted changes or local commits not
   pushed from the current branch, regardless of their assigned group.
+- **Recent**: up to three other repositories with the newest known activity
+  (the later of the estimated last local change and the HEAD commit time),
+  newest first regardless of **Sort by**. A repository that was just
+  committed and pushed leaves Working and stays easy to find here.
+  Repositories without a known activity time are not listed.
 - **Your groups**: create groups using **Add → New group…**. A `shane` group is provided initially.
 - **Ungrouped**: repositories that have not been assigned to a group.
 
+Working and Recent are derived sections above the saved groups. Their
+headings use the same heading bar as saved groups but have no collapse toggle
+and cannot be collapsed; a collapsed Working state saved by an earlier version
+is ignored. Each of them is hidden while it has no repositories.
+
 Drag a repository onto a group heading (including an empty group), or use its
 right-click **Move to group** menu. Dragging into Ungrouped removes an assignment.
-Working is automatic and cannot be a manual drop target. A repository with
-activity appears only in Working and is hidden from its saved group (or
-Ungrouped). When its activity ends, it returns to that section.
-Working rows show their saved group in a compact tag on the left (or
-Ungrouped). Use the group heading's **…** menu to rename or delete a group.
+Working and Recent are automatic and cannot be drop targets for repositories
+or groups. A repository with activity appears only in Working and is hidden
+from its saved group (or Ungrouped). When its activity ends, it returns to
+that section. A Recent row is a second copy: the repository also stays in its
+saved group (or Ungrouped). Working and Recent rows show their saved group in
+a compact tag on the left (or Ungrouped). Recent rows open their repository
+like any other row and can be dragged onto a group to change its assignment. Use the group heading's **…** menu to rename or delete a group.
 Deleting a group leaves all repositories registered and moves its assignments
 to Ungrouped. Group names and assignments persist across app restarts.
 
@@ -33,8 +45,8 @@ variants. Cancel and Escape leave the group unchanged.
 Drag a custom group heading to reorder groups; the
 insertion line shows whether it will land above or below the target heading.
 The **…** menu also has **Move group up/down**, and the focused heading accepts
-Alt+Up/Down arrow keys. Group order is saved; Working and Ungrouped stay fixed at
-the top and bottom.
+Alt+Up/Down arrow keys. Group order is saved; Working and Recent stay fixed at
+the top and Ungrouped at the bottom.
 
 The view options control sorting within every repository section:
 
@@ -45,15 +57,21 @@ The view options control sorting within every repository section:
 - **Uncommitted first**: dirty working copies first, then alphabetically in each
   section.
 - **Name**: alphabetical order in each section.
-- **Uncommitted only**: show staged, unstaged, untracked, and conflicted changes.
-  Unpushed commits alone do not satisfy this explicit filter.
 
-Name search composes with the filter. In activity modes it preserves activity
-order instead of fuzzy relevance order. Empty headings stay available for
-assignment when not filtering. Keyboard selection follows the repository ID
+Sort by does not change Recent, which is always newest first. The former
+**Uncommitted only** filter was removed; a stored value for it is ignored.
+
+Name search applies to every section, including Recent, and preserves the
+section order instead of fuzzy relevance order. Headings without matches are
+hidden while searching; otherwise empty custom groups and Ungrouped stay
+available for assignment. Keyboard selection follows the repository ID
 as activity updates or assignments move a row between Working and its saved
-group. Hover a row to see changed-file and unpushed-commit counts and its
-activity time.
+group. When the selected repository is listed in both Recent and its saved
+group, both rows are highlighted. The row last selected with the keyboard or
+mouse (otherwise the first row of the selected repository) is the anchor for
+Up/Down navigation; if that row leaves Recent, the anchor moves to the
+repository's remaining row. Hover a row to see changed-file and
+unpushed-commit counts and its activity time.
 
 Unpushed counts compare the current HEAD with its configured upstream. Other
 local branches do not affect Working. Without an upstream (including detached
@@ -79,10 +97,18 @@ dropped: requests are merged into one follow-up pass using the shortest
 requested reuse window. This is polling, not continuous monitoring while the
 picker is closed. An already started pass may finish after focus is lost.
 Closing the picker cancels queued work and suppresses late UI callbacks; at
-most two already running Git commands finish within their timeout.
+most four already running Git commands finish within their timeout.
+Each pass checks paths in priority order, computed when the pass starts: the
+selected repository, then repositories in Working, then the other repositories
+with a known change or commit time; both of these tiers are ordered newest
+first. Repositories with no known activity follow in registration order.
+Ties keep the list's current order. An externally edited repository that is
+already in Working or recently active is therefore rechecked early instead of
+waiting behind long-dormant paths.
 Completed repository checks whose activity or error state changed update the
-list immediately, without waiting for the remaining repositories in the pass;
-unchanged checks update the cache and `checkedAt` without an intermediate list
+list immediately, without waiting for the remaining repositories in the pass:
+a newly dirty repository moves to Working as soon as its own check completes.
+Unchanged checks update the cache and `checkedAt` without an intermediate list
 update. These results stay in memory when the picker closes, including results
 from an unfinished pass. Reopening the picker immediately shows the last known
 Working list while outdated results are refreshed.
@@ -99,13 +125,15 @@ app's values change, so an in-app commit and push removes the repository from
 Working without waiting for the recheck. Otherwise rows keep their last known
 check, including restored results and checks that fail after an earlier
 result: these rows stay in Working, or in their saved group, while being
-rechecked, and are never treated as fresh. A path with no earlier result uses
+rechecked, and are never treated as fresh. A failed check keeps the check time
+of the values it preserves, so an app observation made after the last
+successful check still replaces them. A path with no earlier result uses
 the app's own values. The app's values describe the registered repository
 path, so they never replace activity read from a different worktree path.
 
 The scanner uses bundled Git with porcelain v1 NUL-separated output, optional
 index locking disabled, and fsmonitor hooks disabled for this read. It launches
-at most two status commands at a time, each with a 15-second timeout and a
+at most four status commands at a time, each with a 15-second timeout and a
 16-MiB output limit. File-stat concurrency is also bounded. There is no fetch,
 staging, commit, reset, file-content hashing, or recursive filesystem watcher.
 Only file paths reported as changed by Git are inspected, so ignored build output
@@ -118,8 +146,8 @@ credentials. Entries restored from disk after app startup are unverified until
 checked again, but still determine Working membership until then (or until the
 app's own status refresh observes the repository); reopening
 the picker preserves checks from the current session.
-Missing or unreadable repositories are not treated as clean: they remain visible
-in the Uncommitted-only filter, with an unavailable status, unless the app's
+Missing or unreadable repositories are not treated as clean: they keep their
+last known Working membership, with an unavailable status, unless the app's
 own status refresh has read them more recently. A failed pass does not
 overwrite the previous known change count with zero.
 
@@ -232,18 +260,20 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 66 repository activity checks, 33 UI wiring
+The direct runners currently cover 70 repository activity checks, 39 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.
 
 Before merging, validate the full Electron build and actual UI on Linux:
 check multiple projects edited in an external editor, name filtering while
-sorted, selection/keyboard navigation, unavailable repositories, and scrolling
-with a large repository list.
+sorted, selection/keyboard navigation (including repositories listed in both
+Recent and a group), unavailable repositories, the Working/Recent headings in light
+and dark themes, and scrolling with a large repository list.
 
-Group headings show a chevron and repository count, with indented repository rows.
-Click a heading to collapse or expand it. Visibility, custom group order and
+Custom group and Ungrouped headings show a chevron and repository count, with
+indented repository rows. Click such a heading to collapse or expand it.
+Working and Recent headings show only their name and count. Visibility, custom group order and
 repository assignments are saved together and restored on restart. Searching
 temporarily reveals matching repositories in collapsed groups; clearing search
 restores the saved visibility. Heading toggles are inactive during search.
@@ -256,9 +286,10 @@ a valid cross-group drag, a single inset border surrounds the destination
 group's header and body, and remains stable while the pointer moves within that
 group. The source repository's saved group, including its header and empty
 space, fades as one surface without changing its colors. When the repository
-is in Working, its row fades as a whole row. Dropping onto the same repository,
-or onto another repository already in the same group, has no effect and clears the
-highlight. Working is derived and cannot be a drop target. Repository drops
+is in Working or Recent, that row fades as a whole row. Dropping onto the same
+repository, or onto another repository already in the same group, has no effect
+and clears the highlight. Working and Recent are derived and cannot be drop
+targets. Repository drops
 change membership only; they do not save a row position or show an insertion
 preview.
 

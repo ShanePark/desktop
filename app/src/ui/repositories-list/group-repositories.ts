@@ -50,7 +50,10 @@ export const getGroupKey = (group: RepositoryListGroup) => {
 export type Repositoryish = Repository | CloningRepository
 
 export interface IRepositoryListItem extends IFilterListItem {
+  /** The saved group name shown on a row in the derived Working section. */
   readonly workingGroupName?: string
+  /** The saved group name shown on a row in the derived Recent section. */
+  readonly recentGroupName?: string
   readonly text: ReadonlyArray<string>
   readonly id: string
   readonly repository: Repositoryish

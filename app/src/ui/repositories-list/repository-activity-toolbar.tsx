@@ -1,6 +1,5 @@
 import * as React from 'react'
 import { Button } from '../lib/button'
-import { Checkbox, CheckboxValue } from '../lib/checkbox'
 import { RadioButton } from '../lib/radio-button'
 import {
   Popover,
@@ -50,13 +49,6 @@ export class RepositoryActivityToolbar extends React.Component<
     this.props.onChange({ ...this.props.preferences, sort })
   }
 
-  private onFilterChanged = (event: React.FormEvent<HTMLInputElement>) => {
-    this.props.onChange({
-      ...this.props.preferences,
-      onlyUncommitted: event.currentTarget.checked,
-    })
-  }
-
   private renderPopover() {
     if (!this.state.isPopoverOpen) {
       return null
@@ -94,27 +86,15 @@ export class RepositoryActivityToolbar extends React.Component<
             onSelected={this.onSortChanged}
           />
         </fieldset>
-        <fieldset>
-          <Checkbox
-            value={
-              preferences.onlyUncommitted ? CheckboxValue.On : CheckboxValue.Off
-            }
-            label="Uncommitted only"
-            onChange={this.onFilterChanged}
-          />
-        </fieldset>
       </Popover>
     )
   }
 
   public render() {
-    const { preferences } = this.props
     return (
       <div className="repository-activity-options">
         <Button
-          className={`repository-activity-options-button${
-            preferences.onlyUncommitted ? ' filter-active' : ''
-          }`}
+          className="repository-activity-options-button"
           size="small"
           onClick={this.togglePopover}
           onButtonRef={this.onButtonRef}
