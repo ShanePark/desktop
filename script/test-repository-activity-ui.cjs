@@ -63,25 +63,30 @@ class Monitor {
     this.stopped = true
   }
 }
-const row = r => ({
+const row = (r, lookup = new Map()) => ({
   id: String(r.id),
   repository: r,
   text: [r.name],
-  changedFilesCount: 0,
+  changedFilesCount: lookup.get(r.id)?.changedFilesCount ?? 0,
   needsDisambiguation: false,
-  aheadBehind: null,
+  aheadBehind: lookup.get(r.id)?.aheadBehind ?? null,
+  indicatorObservedAt: lookup.get(r.id)?.observedAt,
 })
+let groupingCalls = 0
 const grouping = {
   KnownRepositoryGroup: {
     Enterprise: '_Enterprise_',
     NonGitHub: '_Non-GitHub_',
   },
-  groupRepositories: repos => [
-    { identifier: 'Original', items: repos.map(row) },
-  ],
+  groupRepositories: (repos, lookup) => {
+    groupingCalls++
+    return [
+      { identifier: 'Original', items: repos.map(r => row(r, lookup)) },
+    ]
+  },
   makeRecentRepositoriesGroup: (ids, repos) => ({
     identifier: 'Recent',
-    items: repos.filter(r => ids.includes(r.id)).map(row),
+    items: repos.filter(r => ids.includes(r.id)).map(r => row(r)),
   }),
 }
 const modules = new Map()
@@ -110,7 +115,8 @@ function load(path) {
     if (spec === 'react') return React
     if (spec === 'classnames')
       return (...values) => values.filter(Boolean).join(' ')
-    if (spec === 'memoize-one') return fn => fn
+    if (spec === 'memoize-one')
+      return require(Path.join(root, 'app/node_modules/memoize-one'))
     if (!spec.startsWith('.')) return require(spec)
     const target = Path.resolve(Path.dirname(path), spec)
     if (target.endsWith('/models/popup'))
@@ -437,48 +443,132 @@ test('repository path changes replace monitored paths and trigger a refresh', ()
   })
 })
 test('app-store indicator changes invalidate only those repositories', () => {
-  const lookup = new Map([
-    [1, { changedFilesCount: 2, aheadBehind: { ahead: 1, behind: 0 } }],
-    [2, { changedFilesCount: 0, aheadBehind: null }],
+  let lookup = new Map([
+    [1, { changedFilesCount: 2, aheadBehind: { ahead: 1, behind: 0 }, observedAt: 1 }],
+    [2, { changedFilesCount: 0, aheadBehind: null, observedAt: 1 }],
   ])
-  const lookupProps = { ...props, localRepositoryStateLookup: lookup }
-  const list = new RepositoriesList(lookupProps)
+  const list = new RepositoriesList({ ...props, localRepositoryStateLookup: lookup })
+  // The app store replaces its lookup on every change, as these updates do.
+  const update = change => {
+    const prevProps = list.props
+    lookup = new Map(lookup)
+    change(lookup)
+    list.props = { ...prevProps, localRepositoryStateLookup: lookup }
+    list.componentDidUpdate(prevProps)
+  }
   withIsolatedMount(list, () => {
     const monitor = list.activityMonitor
     const refreshes = monitor.refreshes
 
-    // Same values in new objects (a routine status reload) are not changes.
-    lookup.set(1, {
-      changedFilesCount: 2,
-      aheadBehind: { ahead: 1, behind: 0 },
-    })
-    list.componentDidUpdate(lookupProps)
+    // Same values observed again (a routine status reload) are not changes.
+    update(l =>
+      l.set(1, {
+        changedFilesCount: 2,
+        aheadBehind: { ahead: 1, behind: 0 },
+        observedAt: 2,
+      })
+    )
     Assert.deepEqual(monitor.invalidated, [])
     Assert.equal(monitor.refreshes, refreshes)
 
-    // Commit + push mutate the same Map in place, as the app store does.
-    lookup.set(1, {
-      changedFilesCount: 0,
-      aheadBehind: { ahead: 0, behind: 0 },
-    })
-    list.componentDidUpdate(lookupProps)
+    // Commit + push.
+    update(l =>
+      l.set(1, {
+        changedFilesCount: 0,
+        aheadBehind: { ahead: 0, behind: 0 },
+        observedAt: 3,
+      })
+    )
     Assert.deepEqual(monitor.invalidated, [[repositories[0].path]])
     Assert.equal(monitor.refreshes, refreshes + 1)
     Assert.deepEqual(monitor.refreshOptions.at(-1), { maxAge: 7500 })
 
-    lookup.set(2, {
-      changedFilesCount: 0,
-      aheadBehind: { ahead: 0, behind: 1 },
-    })
-    list.componentDidUpdate(lookupProps)
+    update(l =>
+      l.set(2, {
+        changedFilesCount: 0,
+        aheadBehind: { ahead: 0, behind: 1 },
+        observedAt: 3,
+      })
+    )
     Assert.deepEqual(monitor.invalidated.at(-1), [repositories[1].path])
 
-    lookup.delete(1)
-    lookup.set(3, { changedFilesCount: 1, aheadBehind: null })
-    list.componentDidUpdate(lookupProps)
+    update(l => {
+      l.delete(1)
+      l.set(3, { changedFilesCount: 1, aheadBehind: null, observedAt: 4 })
+    })
     Assert.deepEqual(monitor.invalidated.at(-1), [repositories[0].path])
     Assert.equal(monitor.refreshes, refreshes + 3)
   })
+})
+test('a replaced app-store lookup updates the open picker before the recheck', () => {
+  const path = activityKey(repositories[0].path)
+  const savedStorage = new Map(storage)
+  const list = new RepositoriesList(props)
+  list.setState({
+    activityPreferences: { sort: 'recent', onlyUncommitted: false },
+  })
+  // Restored from the previous session: dirty and unpushed, not yet verified.
+  list.activityMonitor.notify({
+    repositories: new Map([
+      [path, { ...snapshot(3), unpushedCount: 1, checkedAt: 0 }],
+    ]),
+    checking: true,
+    completed: 0,
+    total: 2,
+  })
+  const render = () => list.render().props.children[0].props.groups
+  const working = () =>
+    render()
+      .find(group => group.identifier === WorkingGroup)
+      .items.map(item => [item.repository.id, item.changedFilesCount])
+  const update = lookup => {
+    const prevProps = list.props
+    list.props = { ...prevProps, localRepositoryStateLookup: lookup }
+    list.componentDidUpdate(prevProps)
+  }
+  withIsolatedMount(list, () => {
+    Assert.deepEqual(working(), [[1, 3]])
+    const calls = groupingCalls
+    render()
+    Assert.equal(groupingCalls, calls, 'unchanged props reuse memoized groups')
+
+    // In-app commit and push: the app store observes a clean repository.
+    update(
+      new Map([
+        [
+          1,
+          {
+            changedFilesCount: 0,
+            aheadBehind: { ahead: 0, behind: 0 },
+            observedAt: Date.now(),
+          },
+        ],
+      ])
+    )
+    Assert.deepEqual(working(), [])
+    Assert.equal(groupingCalls, calls + 1)
+    const row = render()
+      .flatMap(group => group.items)
+      .find(item => item.repository.id === 1)
+    Assert.equal(row.changedFilesCount, 0)
+    Assert.match(list.getActivityDescription(row), /^0 changed files; 0 unpushed/)
+    Assert.deepEqual(list.activityMonitor.invalidated.at(-1), [
+      repositories[0].path,
+    ])
+
+    // A later successful check is newer again and wins.
+    list.activityMonitor.notify({
+      repositories: new Map([
+        [path, { ...snapshot(1), unpushedCount: 0, checkedAt: Date.now() + 1 }],
+      ]),
+      checking: false,
+      completed: 2,
+      total: 2,
+    })
+    Assert.deepEqual(working(), [[1, 1]])
+  })
+  storage.clear()
+  savedStorage.forEach((value, key) => storage.set(key, value))
 })
 test('activity filter hides known-clean rows without dropping name search', () => {
   picker.activityMonitor.notify({

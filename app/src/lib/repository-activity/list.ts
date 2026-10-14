@@ -23,6 +23,11 @@ export interface IActivityRow {
     readonly behind: number
   } | null
   readonly changedFilesCount: number
+  /**
+   * When the app store observed `changedFilesCount` and `aheadBehind` for
+   * `repository.path`, if it has.
+   */
+  readonly indicatorObservedAt?: number
   readonly needsDisambiguation: boolean
 }
 
@@ -59,6 +64,23 @@ function lastKnownActivity(
 }
 
 /**
+ * Whether the row's app-store indicator is newer than the activity snapshot.
+ * The app store refreshes it right after in-app commits, pushes, pulls and
+ * discards. It describes the repository path, so it never applies to a row
+ * whose activity is read from a different worktree path.
+ */
+export function indicatorIsNewer(
+  row: IActivityRow,
+  activity: IRepositoryActivity
+): boolean {
+  return (
+    row.indicatorObservedAt !== undefined &&
+    row.indicatorObservedAt > activity.checkedAt &&
+    activityPath(row) === row.repository.path
+  )
+}
+
+/**
  * Name mode retains original groups. Activity modes form a globally sorted
  * list. Optional worktree rows stay with their parent for navigation.
  */
@@ -71,31 +93,51 @@ export function projectActivityGroups<T extends IActivityRow, G>(
 ): ReadonlyArray<IActivityListGroup<T, G>> {
   const snapshot = (row: T) => activities.get(activityKey(activityPath(row)))
   // Unverified and failed snapshots keep rows in place until a successful
-  // check replaces them; the monitor still treats them as stale.
-  const currentActivity = (row: T) => lastKnownActivity(snapshot(row))
-  const dirty = (row: T) =>
-    (currentActivity(row)?.changedFilesCount ?? row.changedFilesCount) > 0
+  // check or a newer app-store indicator replaces them; the monitor still
+  // treats them as stale.
+  const newerSnapshot = (row: T) => {
+    const activity = lastKnownActivity(snapshot(row))
+    return activity === undefined || indicatorIsNewer(row, activity)
+      ? undefined
+      : activity
+  }
+  // The newest observation wins. Without an upstream the indicator cannot
+  // count unpushed commits, so the snapshot's count is kept for that case.
+  const changedFilesCount = (row: T) =>
+    newerSnapshot(row)?.changedFilesCount ?? row.changedFilesCount
+  const unpushedCount = (row: T) => {
+    const activity = newerSnapshot(row)
+    return activity === undefined
+      ? row.aheadBehind?.ahead ??
+          lastKnownActivity(snapshot(row))?.unpushedCount
+      : activity.unpushedCount ?? row.aheadBehind?.ahead
+  }
+  const dirty = (row: T) => changedFilesCount(row) > 0
+  const unknown = (row: T) => {
+    const activity = snapshot(row)
+    return (
+      activityIsUnknown(activity) &&
+      !(activity && indicatorIsNewer(row, activity))
+    )
+  }
   const include = (row: T) =>
     !preferences.onlyUncommitted ||
     row.repository.id < 0 ||
     dirty(row) ||
-    activityIsUnknown(snapshot(row))
+    unknown(row)
 
   const annotate = (row: T): T => {
-    const activity = currentActivity(row)
-    if (activity === undefined) {
+    if (lastKnownActivity(snapshot(row)) === undefined) {
       return row
     }
+    const ahead = unpushedCount(row)
     return {
       ...row,
-      changedFilesCount: activity.changedFilesCount,
+      changedFilesCount: changedFilesCount(row),
       aheadBehind:
-        activity.unpushedCount === undefined
+        ahead === undefined
           ? row.aheadBehind
-          : {
-              ahead: activity.unpushedCount,
-              behind: row.aheadBehind?.behind ?? 0,
-            },
+          : { ahead, behind: row.aheadBehind?.behind ?? 0 },
     }
   }
 
@@ -206,12 +248,7 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   // their saved assignments determine where they return when activity ends.
   const working = new Set(
     annotated
-      .filter(
-        row =>
-          dirty(row) ||
-          (currentActivity(row)?.unpushedCount ?? row.aheadBehind?.ahead ?? 0) >
-            0
-      )
+      .filter(row => dirty(row) || (unpushedCount(row) ?? 0) > 0)
       .map(row => row.repository.id)
   )
   const buckets = new Map<string, T[]>([

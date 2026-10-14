@@ -105,7 +105,10 @@ export interface IAppState {
   /**
    * A cache of the latest repository state values, keyed by the repository id
    */
-  readonly localRepositoryStateLookup: Map<number, ILocalRepositoryState>
+  readonly localRepositoryStateLookup: ReadonlyMap<
+    number,
+    ILocalRepositoryState
+  >
 
   readonly selectedState: PossibleSelections | null
 

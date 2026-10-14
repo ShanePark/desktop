@@ -158,6 +158,11 @@ export interface ILocalRepositoryState {
    * The number of uncommitted changes currently in the repository.
    */
   readonly changedFilesCount: number
+  /**
+   * When these values were observed (milliseconds since the epoch), so
+   * consumers can tell them apart from older cached data.
+   */
+  readonly observedAt: number
 }
 
 /**

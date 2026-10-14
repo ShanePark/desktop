@@ -57,6 +57,8 @@ export interface IRepositoryListItem extends IFilterListItem {
   readonly needsDisambiguation: boolean
   readonly aheadBehind: IAheadBehind | null
   readonly changedFilesCount: number
+  /** When the app store observed `aheadBehind` and `changedFilesCount`. */
+  readonly indicatorObservedAt?: number
 }
 
 const recentRepositoriesThreshold = 7
@@ -165,6 +167,7 @@ const toSortedListItems = (
           ((allNames.get(title) ?? 0) > 1 && group.kind === 'recent'),
         aheadBehind: repoState?.aheadBehind ?? null,
         changedFilesCount: repoState?.changedFilesCount ?? 0,
+        indicatorObservedAt: repoState?.observedAt,
       }
     })
     .sort(({ repository: x }, { repository: y }) =>

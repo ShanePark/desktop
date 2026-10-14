@@ -85,12 +85,23 @@ list immediately, without waiting for the remaining repositories in the pass;
 unchanged checks update the cache and `checkedAt` without an intermediate list
 update. These results stay in memory when the picker closes, including results
 from an unfinished pass. Reopening the picker immediately shows the last known
-Working list while outdated results are refreshed. Rows keep their last known
-change and unpushed counts until a successful check replaces them, including
-unverified results restored from the previous app session and checks that fail
-after an earlier result. These rows stay in Working, or in their saved group,
-while being rechecked; they are never treated as fresh. Only a path with no
-earlier result falls back to the app's own change and unpushed indicators.
+Working list while outdated results are refreshed.
+
+Each row shows the newest observation of its counts. The app's own status
+refresh records when it observed a repository's changed-file and ahead/behind
+counts, and runs right after commits, pushes, pulls, and discards made in the
+app. When that observation is newer than the row's activity check, the app's
+changed-file count is used, and its ahead count when the branch has an
+upstream; without an upstream the check's unpushed count is kept. Unverified
+results restored from the previous app session count as older than any
+observation from the current session. An open picker updates as soon as the
+app's values change, so an in-app commit and push removes the repository from
+Working without waiting for the recheck. Otherwise rows keep their last known
+check, including restored results and checks that fail after an earlier
+result: these rows stay in Working, or in their saved group, while being
+rechecked, and are never treated as fresh. A path with no earlier result uses
+the app's own values. The app's values describe the registered repository
+path, so they never replace activity read from a different worktree path.
 
 The scanner uses bundled Git with porcelain v1 NUL-separated output, optional
 index locking disabled, and fsmonitor hooks disabled for this read. It launches
@@ -104,10 +115,12 @@ Settings and a bounded metadata cache are stored in this installation's
 localStorage (`desktop.repository-activity.*.v1`). The cache contains local
 paths, counts, timestamps and metadata fingerprints, not file contents or
 credentials. Entries restored from disk after app startup are unverified until
-checked again, but still determine Working membership until then; reopening
+checked again, but still determine Working membership until then (or until the
+app's own status refresh observes the repository); reopening
 the picker preserves checks from the current session.
 Missing or unreadable repositories are not treated as clean: they remain visible
-in the Uncommitted-only filter, with an unavailable status. A failed pass does not
+in the Uncommitted-only filter, with an unavailable status, unless the app's
+own status refresh has read them more recently. A failed pass does not
 overwrite the previous known change count with zero.
 
 Activity is keyed by the repository's current worktree path, so a linked
@@ -219,7 +232,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 59 repository activity checks, 32 UI wiring
+The direct runners currently cover 66 repository activity checks, 33 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.

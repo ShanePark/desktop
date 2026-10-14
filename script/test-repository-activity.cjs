@@ -238,6 +238,66 @@ async function main() {
       Assert.deepEqual(result.working, [])
       Assert.deepEqual(result.saved, ['1'])
     })
+    const projectedRow = (rows, data, id) =>
+      project([group('all', rows)], data, prefs(), 'activity', {
+        groups: [{ id: 'group-a', name: 'A' }],
+        assignments: Object.fromEntries(rows.map(r => [r.repository.path, 'group-a'])),
+      }).flatMap(g => g.items).find(r => r.id === id)
+    test('a newer clean indicator removes restored or older snapshots from Working', () => {
+      // After an in-app commit and push, the app store observes a clean state.
+      const committed = { ...row(1, 'committed'), aheadBehind: { ahead: 0, behind: 2 }, indicatorObservedAt: 1500 }
+      for (const stale of [{ checkedAt: 0 }, { checkedAt: 1000 }, { checkedAt: 1000, error: true }]) {
+        const data = new Map([[key(committed.repository.path), { ...snap(3, 500), unpushedCount: 2, ...stale }]])
+        const result = working([committed], data)
+        Assert.deepEqual(result.working, [])
+        Assert.deepEqual(result.saved, ['1'])
+        const projected = projectedRow([committed], data, '1')
+        Assert.equal(projected.changedFilesCount, 0)
+        Assert.deepEqual(projected.aheadBehind, { ahead: 0, behind: 2 })
+      }
+    })
+    test('a newer dirty indicator moves a clean snapshot into Working', () => {
+      const discarded = { ...row(1, 'edited'), changedFilesCount: 2, aheadBehind: { ahead: 0, behind: 0 }, indicatorObservedAt: 1500 }
+      const result = working([discarded], new Map([[key(discarded.repository.path), { ...snap(0), unpushedCount: 0 }]]))
+      Assert.deepEqual(result.working.map(r => [r.id, r.changedFilesCount]), [['1', 2]])
+    })
+    test('an older indicator loses to a newer successful snapshot', () => {
+      const stale = { ...row(1, 'stale'), changedFilesCount: 0, aheadBehind: { ahead: 0, behind: 0 }, indicatorObservedAt: 900 }
+      const data = new Map([[key(stale.repository.path), { ...snap(4, 500), unpushedCount: 1 }]])
+      const result = working([stale], data)
+      Assert.deepEqual(result.working.map(r => r.id), ['1'])
+      Assert.equal(result.working[0].changedFilesCount, 4)
+      Assert.deepEqual(result.working[0].aheadBehind, { ahead: 1, behind: 0 })
+    })
+    test('a newer indicator without upstream keeps the snapshot unpushed count', () => {
+      const local = { ...row(1, 'local'), aheadBehind: null, indicatorObservedAt: 1500 }
+      const data = new Map([[key(local.repository.path), { ...snap(3, 500), unpushedCount: 2, checkedAt: 0 }]])
+      const result = working([local], data)
+      Assert.deepEqual(result.working.map(r => r.id), ['1'])
+      Assert.equal(result.working[0].changedFilesCount, 0)
+      Assert.deepEqual(result.working[0].aheadBehind, { ahead: 2, behind: 0 })
+    })
+    test('without an indicator observation the last known snapshot is kept', () => {
+      const restored = { ...row(1, 'restored'), aheadBehind: { ahead: 0, behind: 0 } }
+      const data = new Map([[key(restored.repository.path), { ...snap(3, 500), unpushedCount: 0, checkedAt: 0 }]])
+      Assert.deepEqual(working([restored], data).working.map(r => [r.id, r.changedFilesCount]), [['1', 3]])
+    })
+    test('uncommitted-only treats a newer clean indicator as known', () => {
+      const clean = { ...row(1, 'clean'), indicatorObservedAt: 1500 }
+      const restored = row(2, 'restored')
+      const data = new Map([
+        [key(clean.repository.path), { ...snap(2, 500), checkedAt: 0 }],
+        [key(restored.repository.path), { ...snap(0), checkedAt: 0 }],
+      ])
+      Assert.deepEqual(ids(project([group('all', [clean, restored])], data, prefs('recent', true), 'activity')), ['2'])
+    })
+    test('repository indicators do not override linked worktree snapshots', () => {
+      const parent = { ...row(1, 'repo', Path.resolve('fixture/main'), { type: 'main', path: Path.resolve('fixture/main') }), indicatorObservedAt: 1500 }
+      const child = { ...parent, id: '1:child', worktree: { type: 'linked', path: Path.resolve('fixture/child') } }
+      const data = new Map([[key(parent.worktree.path), snap(1)], [key(child.worktree.path), snap(1)]])
+      const result = project([group('all', [parent, child])], data, prefs(), 'activity')[0].items
+      Assert.deepEqual(result.map(r => [r.id, r.changedFilesCount]), [['1', 0], ['1:child', 1]])
+    })
     test('name mode preserves original groups and pin order', () => {
       const z = row(2, 'zeta'), a = row(1, 'alpha')
       const result = project([group('pinned', [z]), group('owner', [a])], new Map(), prefs('name'), 'activity')

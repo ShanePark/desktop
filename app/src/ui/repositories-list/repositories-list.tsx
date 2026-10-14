@@ -41,7 +41,10 @@ import {
 } from '../../lib/repository-activity/preferences'
 import { activityKey } from '../../lib/repository-activity/status'
 import type { IRepositoryActivity } from '../../lib/repository-activity/status'
-import { projectActivityGroups } from '../../lib/repository-activity/list'
+import {
+  indicatorIsNewer,
+  projectActivityGroups,
+} from '../../lib/repository-activity/list'
 import {
   IRepositoryOrganization,
   readRepositoryOrganization,
@@ -231,7 +234,10 @@ export class RepositoriesList extends React.Component<
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
   private lastRenderedActivity: IActivityState
-  /** The app store mutates its lookup in place, so compare copied values. */
+  /**
+   * Indicator values from the last update. Routine status reloads replace the
+   * lookup with equal values, which must not invalidate cached activity.
+   */
   private localStateSnapshot: ReadonlyMap<number, string> = new Map()
 
   /**
@@ -424,11 +430,17 @@ export class RepositoriesList extends React.Component<
     const activity = this.state.activity.repositories.get(
       activityKey(item.repository.path)
     )
-    if (activity === undefined || activity.checkedAt === 0) {
+    if (activity === undefined) {
       return 'Local activity: waiting for status check'
     }
-    if (activity.error) {
-      return 'Local activity: unavailable (not treated as clean)'
+    // A newer app-store indicator supplies the displayed counts.
+    if (!indicatorIsNewer(item, activity)) {
+      if (activity.checkedAt === 0) {
+        return 'Local activity: waiting for status check'
+      }
+      if (activity.error) {
+        return 'Local activity: unavailable (not treated as clean)'
+      }
     }
     const time =
       activity.lastChangedAt === null
@@ -436,8 +448,9 @@ export class RepositoriesList extends React.Component<
         : `last local change ${new Date(
             activity.lastChangedAt
           ).toLocaleString()} (estimated)`
-    return `${activity.changedFilesCount} changed files; ${
-      activity.unpushedCount ?? 0
+    // `item` is projected, so these are the counts the row displays.
+    return `${item.changedFilesCount} changed files; ${
+      item.aheadBehind?.ahead ?? 0
     } unpushed commits; ${time}`
   }
 

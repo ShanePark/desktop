@@ -596,10 +596,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private currentBanner: Banner | null = null
   private emitQueued = false
 
-  private readonly localRepositoryStateLookup = new Map<
+  /**
+   * Replaced rather than mutated on every change so memoized consumers (such
+   * as the repository list) observe updates by reference.
+   */
+  private localRepositoryStateLookup: ReadonlyMap<
     number,
     ILocalRepositoryState
-  >()
+  > = new Map()
 
   /** Map from shortcut (e.g., :+1:) to on disk URL. */
   private emoji = new Map<string, Emoji>()
@@ -4147,6 +4151,24 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
+  private setLocalRepositoryState(
+    repositoryId: number,
+    state: Omit<ILocalRepositoryState, 'observedAt'>,
+    observedAt = Date.now()
+  ) {
+    const lookup = new Map(this.localRepositoryStateLookup)
+    lookup.set(repositoryId, { ...state, observedAt })
+    this.localRepositoryStateLookup = lookup
+  }
+
+  private deleteLocalRepositoryState(repositoryId: number) {
+    if (this.localRepositoryStateLookup.has(repositoryId)) {
+      const lookup = new Map(this.localRepositoryStateLookup)
+      lookup.delete(repositoryId)
+      this.localRepositoryStateLookup = lookup
+    }
+  }
+
   /**
    * Update the repository sidebar indicator for the repository
    */
@@ -4154,19 +4176,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     status: IStatusResult | null
   ): Promise<void> {
-    const lookup = this.localRepositoryStateLookup
-
-    if (repository.missing) {
-      lookup.delete(repository.id)
+    if (repository.missing || status === null) {
+      this.deleteLocalRepositoryState(repository.id)
       return
     }
 
-    if (status === null) {
-      lookup.delete(repository.id)
-      return
-    }
-
-    lookup.set(repository.id, {
+    this.setLocalRepositoryState(repository.id, {
       aheadBehind: status.branchAheadBehind || null,
       changedFilesCount: status.workingDirectory.files.length,
     })
@@ -4175,23 +4190,21 @@ export class AppStore extends TypedBaseStore<IAppState> {
    * Refresh indicator in repository list for a specific repository
    */
   private refreshIndicatorForRepository = async (repository: Repository) => {
-    const lookup = this.localRepositoryStateLookup
-
     if (repository.missing) {
-      lookup.delete(repository.id)
+      this.deleteLocalRepositoryState(repository.id)
       return
     }
 
     const exists = await pathExists(repository.path)
     if (!exists) {
-      lookup.delete(repository.id)
+      this.deleteLocalRepositoryState(repository.id)
       return
     }
 
     const gitStore = this.gitStoreCache.get(repository)
     const status = await gitStore.loadStatus()
     if (status === null) {
-      lookup.delete(repository.id)
+      this.deleteLocalRepositoryState(repository.id)
       return
     }
 
@@ -4207,13 +4220,19 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (await this.shouldBackgroundFetch(repository, lastPush)) {
       const aheadBehind = await this.fetchForRepositoryIndicator(repository)
 
-      const existing = lookup.get(repository.id)
-      lookup.set(repository.id, {
-        aheadBehind: aheadBehind,
-        // We don't need to update changedFilesCount here since it was already
-        // set when calling `updateSidebarIndicator()` with the status object.
-        changedFilesCount: existing?.changedFilesCount ?? 0,
-      })
+      const existing = this.localRepositoryStateLookup.get(repository.id)
+      this.setLocalRepositoryState(
+        repository.id,
+        {
+          aheadBehind: aheadBehind,
+          // We don't need to update changedFilesCount here since it was already
+          // set when calling `updateSidebarIndicator()` with the status object.
+          changedFilesCount: existing?.changedFilesCount ?? 0,
+        },
+        // The carried-over count is only as recent as that status, so the
+        // fetch must not make it look newer than an activity check since.
+        existing?.observedAt
+      )
       this.emitUpdate()
     }
   }
