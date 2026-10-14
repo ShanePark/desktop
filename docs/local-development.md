@@ -7,7 +7,7 @@ a personal fork of the Linux GitHub Desktop project.
 
 Use `origin` (`git@github.com:ShanePark/desktop.git`) as the fetch and push remote.
 Working branches should track the same branch name on `origin`. The main
-development branch is `linux`, with upstream Desktop 3.6.5, the `3.6.5-linux1`
+development branch is `linux`, with upstream Desktop 3.6.6, the `3.6.6-linux1`
 package version, Electron 42.0.1, and the repository workflow improvements
 integrated. Node.js 24.15.0 is pinned for development. Create focused feature
 branches from `linux` for subsequent work; each feature branch should push to

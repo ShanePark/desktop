@@ -1,8 +1,8 @@
 # Repository activity in the Linux fork
 
 This feature is integrated into `ShanePark/desktop`'s `linux` branch, which
-tracks upstream Desktop 3.6.5 and publishes the Linux package as
-`3.6.5-linux1` with Electron 42.0.1. Development uses the pinned Node.js
+tracks upstream Desktop 3.6.6 and publishes the Linux package as
+`3.6.6-linux1` with Electron 42.0.1. Development uses the pinned Node.js
 24.15.0 runtime.
 See [local development](local-development.md) for the fork's Git and Dock workflow.
 

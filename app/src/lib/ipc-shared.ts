@@ -97,6 +97,7 @@ export type RequestResponseChannels = {
   'get-exec-path': () => Promise<string>
   'move-to-trash': (path: string) => Promise<void>
   'show-item-in-folder': (path: string) => Promise<void>
+  'confirm-reveal-directory': () => Promise<boolean>
   'show-contextual-menu': (
     items: ReadonlyArray<ISerializableMenuItem>,
     addSpellCheckMenu: boolean

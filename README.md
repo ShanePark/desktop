@@ -28,7 +28,7 @@ documented in [repository activity](docs/repository-activity.md).
 ## Development
 
 The `linux` branch is this fork's main development branch. It is based on
-upstream GitHub Desktop 3.6.5 with the repository workflow improvements
+upstream GitHub Desktop 3.6.6 with the repository workflow improvements
 described above.
 
 Clone this fork and install its dependencies:

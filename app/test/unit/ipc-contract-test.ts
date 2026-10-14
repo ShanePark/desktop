@@ -70,6 +70,7 @@ describe('IPC channel contract', () => {
     'get-exec-path',
     'move-to-trash',
     'show-item-in-folder',
+    'confirm-reveal-directory',
     'show-contextual-menu',
     'is-window-focused',
     'open-external',
