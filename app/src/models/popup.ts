@@ -5,7 +5,7 @@ import {
 } from './repository'
 import { PullRequest } from './pull-request'
 import { Branch } from './branch'
-import { ReleaseNote, ReleaseSummary } from './release-notes'
+import { ReleaseNote } from './release-notes'
 import { IRemote } from './remote'
 import { RetryAction } from './retry-actions'
 import { WorkingDirectoryFileChange } from './status'
@@ -44,10 +44,8 @@ export enum PopupType {
   About = 'About',
   InstallGit = 'InstallGit',
   PublishRepository = 'PublishRepository',
-  Acknowledgements = 'Acknowledgements',
   UntrustedCertificate = 'UntrustedCertificate',
   RemoveRepository = 'RemoveRepository',
-  TermsAndConditions = 'TermsAndConditions',
   PushBranchCommits = 'PushBranchCommits',
   CLIInstalled = 'CLIInstalled',
   GenericGitAuthentication = 'GenericGitAuthentication',
@@ -57,7 +55,6 @@ export enum PopupType {
   InitializeLFS = 'InitializeLFS',
   LFSAttributeMismatch = 'LFSAttributeMismatch',
   UpstreamAlreadyExists = 'UpstreamAlreadyExists',
-  ReleaseNotes = 'ReleaseNotes',
   DeletePullRequest = 'DeletePullRequest',
   OversizedFiles = 'OversizedFiles',
   CommitConflictsWarning = 'CommitConflictsWarning',
@@ -97,14 +94,12 @@ export enum PopupType {
   UnreachableCommits = 'UnreachableCommits',
   StartPullRequest = 'StartPullRequest',
   Error = 'Error',
-  InstallingUpdate = 'InstallingUpdate',
   TestNotifications = 'TestNotifications',
   PullRequestComment = 'PullRequestComment',
   UnknownAuthors = 'UnknownAuthors',
   TestIcons = 'TestIcons',
   ConfirmRestart = 'ConfirmRestart',
   ConfirmCommitFilteredChanges = 'ConfirmCommitFilteredChanges',
-  TestAbout = 'TestAbout',
   TestCLIAction = 'TestCLIAction',
   TestCopilotSnapshotCard = 'TestCopilotSnapshotCard',
   PushProtectionError = 'PushProtectionError',
@@ -205,14 +200,12 @@ export type PopupDetail =
   | { type: PopupType.About }
   | { type: PopupType.InstallGit; path: string }
   | { type: PopupType.PublishRepository; repository: Repository }
-  | { type: PopupType.Acknowledgements }
   | {
       type: PopupType.UntrustedCertificate
       certificate: Electron.Certificate
       url: string
     }
   | { type: PopupType.RemoveRepository; repository: Repository }
-  | { type: PopupType.TermsAndConditions }
   | {
       type: PopupType.PushBranchCommits
       repository: Repository
@@ -241,10 +234,6 @@ export type PopupDetail =
       type: PopupType.UpstreamAlreadyExists
       repository: Repository
       existingRemote: IRemote
-    }
-  | {
-      type: PopupType.ReleaseNotes
-      newReleases: ReadonlyArray<ReleaseSummary>
     }
   | {
       type: PopupType.DeletePullRequest
@@ -451,9 +440,6 @@ export type PopupDetail =
       error: Error
     }
   | {
-      type: PopupType.InstallingUpdate
-    }
-  | {
       type: PopupType.TestNotifications
       repository: RepositoryWithGitHubRepository
     }
@@ -478,9 +464,6 @@ export type PopupDetail =
       type: PopupType.ConfirmCommitFilteredChanges
       onCommitAnyway: () => void
       showFilesToBeCommitted: () => void
-    }
-  | {
-      type: PopupType.TestAbout
     }
   | {
       type: PopupType.TestCLIAction

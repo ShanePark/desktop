@@ -1,17 +1,15 @@
 # [GitHub Desktop](https://desktop.github.com/) — ShanePark Linux fork
 
-[![Upstream CI](https://github.com/shiftkey/desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/shiftkey/desktop/actions/workflows/ci.yml)
-
-This repository is [ShanePark's working fork](https://github.com/ShanePark/desktop)
-of [GitHub Desktop](https://desktop.github.com/), based on the Linux work in
-[shiftkey/desktop](https://github.com/shiftkey/desktop). GitHub Desktop is an
-open-source [Electron](https://www.electronjs.org/)-based GitHub app written in
+This repository is [ShanePark's personal fork](https://github.com/ShanePark/desktop)
+of [GitHub Desktop](https://desktop.github.com/), built and run locally on
+Linux. GitHub Desktop is an open-source
+[Electron](https://www.electronjs.org/)-based GitHub app written in
 [TypeScript](https://www.typescriptlang.org) and [React](https://reactjs.org/).
 
-The [original GitHub Desktop project](https://github.com/desktop/desktop) and
-the [shiftkey Linux fork](https://github.com/shiftkey/desktop) remain the
-upstream references for the product, its history, and their contributor
-communities. This fork is the working source for ShanePark's Linux improvements.
+The [original GitHub Desktop project](https://github.com/desktop/desktop)
+remains the upstream reference for the product, its history, and its
+contributor community. This fork is the working source for ShanePark's Linux
+improvements.
 
 ## Current fork work
 
@@ -29,9 +27,9 @@ documented in [repository activity](docs/repository-activity.md).
 
 ## Development
 
-The `linux` branch is this fork's main development branch. It combines the
-3.4.12 Linux release base with the repository workflow improvements described
-above.
+The `linux` branch is this fork's main development branch. It is based on
+upstream GitHub Desktop 3.6.5 with the repository workflow improvements
+described above.
 
 Clone this fork and install its dependencies:
 
@@ -56,12 +54,8 @@ runtime logs, and feature-specific checks.
 
 ## Linux packages
 
-Use the source build workflow above for this fork's changes.
-For packaged upstream Linux builds and current
-installation instructions, see the [shiftkey/desktop README](https://github.com/shiftkey/desktop)
-and its [releases](https://github.com/shiftkey/desktop/releases). The AppImage,
-Debian/RPM feeds, and other packages described there belong to those upstream
-projects and are not releases of `ShanePark/desktop`.
+This fork does not publish release packages. Build and run it from source with
+the workflow above.
 
 ## More information
 

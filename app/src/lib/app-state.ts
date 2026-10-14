@@ -69,7 +69,6 @@ import { RepoRulesInfo } from '../models/repo-rules'
 import { IAPIRepoRuleset } from './api'
 import { ICustomIntegration } from './custom-integration'
 import { Emoji } from './emoji'
-import { IUpdateState } from '../ui/lib/update-store'
 
 export enum SelectionType {
   Repository,
@@ -221,12 +220,6 @@ export interface IAppState {
    * Alt key is pressed. Only applicable on non-macOS platforms.
    */
   readonly highlightAccessKeys: boolean
-
-  /** Whether we should show the update banner */
-  readonly isUpdateAvailableBannerVisible: boolean
-
-  /** Whether there is an update to showcase */
-  readonly isUpdateShowcaseVisible: boolean
 
   /** Whether we should ask the user to move the app to /Applications */
   readonly askToMoveToApplicationsFolderSetting: boolean
@@ -406,8 +399,6 @@ export interface IAppState {
   readonly cachedRepoRulesets: ReadonlyMap<number, IAPIRepoRuleset>
 
   readonly underlineLinks: boolean
-
-  readonly updateState: IUpdateState
 
   readonly commitMessageGenerationDisclaimerLastSeen: number | null
 

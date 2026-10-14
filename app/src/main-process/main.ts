@@ -37,10 +37,7 @@ import { installAuthenticatedImageFilter } from './authenticated-image-filter'
 import { installAliveOriginFilter } from './alive-origin-filter'
 import { installSameOriginFilter } from './same-origin-filter'
 import * as ipcMain from './ipc-main'
-import {
-  getArchitecture,
-  isAppRunningUnderARM64Translation,
-} from '../lib/get-architecture'
+import { getArchitecture } from '../lib/get-architecture'
 import { buildSpellCheckMenu } from './menu/build-spell-check-menu'
 import { getMainGUID, saveGUIDFile } from '../lib/get-main-guid'
 import {
@@ -541,14 +538,6 @@ app.on('ready', () => {
     })
   })
 
-  ipcMain.handle('check-for-updates', async (_, url) =>
-    mainWindow?.checkForUpdates(url)
-  )
-
-  ipcMain.on('quit-and-install-updates', () =>
-    mainWindow?.quitAndInstallUpdate()
-  )
-
   ipcMain.on('restart-app', () => {
     app.relaunch()
     app.exit()
@@ -650,14 +639,6 @@ app.on('ready', () => {
    * An event sent by the renderer asking for the executable path
    */
   ipcMain.handle('get-exec-path', async () => process.execPath)
-
-  /**
-   * An event sent by the renderer asking for whether the app is running under
-   * rosetta translation
-   */
-  ipcMain.handle('is-running-under-arm64-translation', async () =>
-    isAppRunningUnderARM64Translation(app)
-  )
 
   /**
    * An event sent by the renderer asking to move the app to the application

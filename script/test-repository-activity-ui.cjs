@@ -43,7 +43,11 @@ class Monitor {
     this.paths = []
     this.refreshes = 0
     this.refreshOptions = []
+    this.invalidated = []
     this.stopped = false
+  }
+  invalidate(paths) {
+    this.invalidated.push(paths)
   }
   setPaths(paths) {
     const changed = JSON.stringify(paths) !== JSON.stringify(this.paths)
@@ -276,6 +280,21 @@ const props = {
   },
 }
 const picker = new RepositoriesList(props)
+/** Mounts another list without replacing the shared picker's listeners. */
+const withIsolatedMount = (list, run) => {
+  const savedListeners = new Map(listeners)
+  const savedTick = tick
+  try {
+    list.componentDidMount()
+    run()
+  } finally {
+    list.componentWillUnmount()
+    listeners.clear()
+    savedListeners.forEach((value, key) => listeners.set(key, value))
+    tick = savedTick
+    cleared = false
+  }
+}
 const listElement = () => picker.render().props.children[0]
 const snapshot = count => ({
   changedFilesCount: count,
@@ -348,7 +367,7 @@ test('mount scans every registered repository despite active filters', () => {
     repositories.map(r => r.path)
   )
   Assert.equal(picker.activityMonitor.refreshes, 1)
-  Assert.deepEqual(picker.activityMonitor.refreshOptions, [{ maxAge: 15000 }])
+  Assert.deepEqual(picker.activityMonitor.refreshOptions, [{ maxAge: 0 }])
 })
 test('reopening reuses verified session snapshots before the background refresh', () => {
   const cached = new Map(
@@ -375,8 +394,9 @@ test('reopening reuses verified session snapshots before the background refresh'
   Assert.equal(reopened.activityMonitor.initial.size, 2)
   Assert.equal(reopened.activityMonitor.refreshes, 0)
 
-  reopened.refreshActivity()
-  Assert.deepEqual(reopened.activityMonitor.refreshOptions, [{ maxAge: 15000 }])
+  withIsolatedMount(reopened, () => {
+    Assert.deepEqual(reopened.activityMonitor.refreshOptions, [{ maxAge: 0 }])
+  })
 })
 test('reopening retains partial in-progress session results', () => {
   const partial = new Map([[activityKey(repositories[1].path), snapshot(1)]])
@@ -412,6 +432,53 @@ test('repository path changes replace monitored paths and trigger a refresh', ()
     added.path,
   ])
   Assert.equal(changing.activityMonitor.refreshes, before + 1)
+  Assert.deepEqual(changing.activityMonitor.refreshOptions.at(-1), {
+    maxAge: 7500,
+  })
+})
+test('app-store indicator changes invalidate only those repositories', () => {
+  const lookup = new Map([
+    [1, { changedFilesCount: 2, aheadBehind: { ahead: 1, behind: 0 } }],
+    [2, { changedFilesCount: 0, aheadBehind: null }],
+  ])
+  const lookupProps = { ...props, localRepositoryStateLookup: lookup }
+  const list = new RepositoriesList(lookupProps)
+  withIsolatedMount(list, () => {
+    const monitor = list.activityMonitor
+    const refreshes = monitor.refreshes
+
+    // Same values in new objects (a routine status reload) are not changes.
+    lookup.set(1, {
+      changedFilesCount: 2,
+      aheadBehind: { ahead: 1, behind: 0 },
+    })
+    list.componentDidUpdate(lookupProps)
+    Assert.deepEqual(monitor.invalidated, [])
+    Assert.equal(monitor.refreshes, refreshes)
+
+    // Commit + push mutate the same Map in place, as the app store does.
+    lookup.set(1, {
+      changedFilesCount: 0,
+      aheadBehind: { ahead: 0, behind: 0 },
+    })
+    list.componentDidUpdate(lookupProps)
+    Assert.deepEqual(monitor.invalidated, [[repositories[0].path]])
+    Assert.equal(monitor.refreshes, refreshes + 1)
+    Assert.deepEqual(monitor.refreshOptions.at(-1), { maxAge: 7500 })
+
+    lookup.set(2, {
+      changedFilesCount: 0,
+      aheadBehind: { ahead: 0, behind: 1 },
+    })
+    list.componentDidUpdate(lookupProps)
+    Assert.deepEqual(monitor.invalidated.at(-1), [repositories[1].path])
+
+    lookup.delete(1)
+    lookup.set(3, { changedFilesCount: 1, aheadBehind: null })
+    list.componentDidUpdate(lookupProps)
+    Assert.deepEqual(monitor.invalidated.at(-1), [repositories[0].path])
+    Assert.equal(monitor.refreshes, refreshes + 3)
+  })
 })
 test('activity filter hides known-clean rows without dropping name search', () => {
   picker.activityMonitor.notify({
@@ -1237,13 +1304,22 @@ test('group drag preview keeps virtualized headers in their layout slots', () =>
     picker.updateOrganization(originalOrganization)
   }
 })
-test('inactive window does not start scheduled scans; focus does', () => {
+test('ticks use half the interval as their freshness window', () => {
+  const before = picker.activityMonitor.refreshes
+  tick()
+  Assert.equal(picker.activityMonitor.refreshes, before + 1)
+  Assert.deepEqual(picker.activityMonitor.refreshOptions.at(-1), {
+    maxAge: 7500,
+  })
+})
+test('inactive window does not start scheduled scans; focus forces one', () => {
   const before = picker.activityMonitor.refreshes
   document.hasFocus = () => false
   tick()
   Assert.equal(picker.activityMonitor.refreshes, before)
   listeners.get('focus')()
   Assert.equal(picker.activityMonitor.refreshes, before + 1)
+  Assert.deepEqual(picker.activityMonitor.refreshOptions.at(-1), { maxAge: 0 })
 })
 test('unmount stops queued work and removes timer and listeners', () => {
   picker.componentWillUnmount()

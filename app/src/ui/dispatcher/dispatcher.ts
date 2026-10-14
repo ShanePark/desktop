@@ -1093,20 +1093,6 @@ export class Dispatcher {
   }
 
   /**
-   * Set the update banner's visibility
-   */
-  public setUpdateBannerVisibility(isVisible: boolean) {
-    return this.appStore._setUpdateBannerVisibility(isVisible)
-  }
-
-  /**
-   * Set the update show case visibility
-   */
-  public setUpdateShowCaseVisibility(isVisible: boolean) {
-    return this.appStore._setUpdateShowCaseVisibility(isVisible)
-  }
-
-  /**
    * Set the banner state for the application
    */
   public setBanner(state: Banner) {
@@ -4152,26 +4138,6 @@ export class Dispatcher {
 
   public updatePullRequestBaseBranch(repository: Repository, branch: Branch) {
     this.appStore._updatePullRequestBaseBranch(repository, branch)
-  }
-
-  /**
-   * Attempts to quit the app if it's not updating, unless requested to quit
-   * even if it is updating.
-   *
-   * @param evenIfUpdating Whether to quit even if the app is updating.
-   */
-  public quitApp(evenIfUpdating: boolean) {
-    this.appStore._quitApp(evenIfUpdating)
-  }
-
-  /**
-   * Cancels quitting the app. This could be needed if, on macOS, the user tries
-   * to quit the app while an update is in progress, but then after being
-   * informed about the issues that could cause they decided to not close the
-   * app yet.
-   */
-  public cancelQuittingApp() {
-    this.appStore._cancelQuittingApp()
   }
 
   /**

@@ -49,7 +49,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'fs'
-import { updateLicenseDump } from './licenses/update-license-dump'
 import { verifyInjectedSassVariables } from './validate-sass/validate-all'
 import { join } from 'path'
 import assert from 'assert'
@@ -97,19 +96,6 @@ verifyInjectedSassVariables(outRoot)
     if (!isDevelopmentBuild) {
       process.exit(1)
     }
-  })
-  .then(() => {
-    console.log('Updating our licenses dump…')
-    return updateLicenseDump(projectRoot, outRoot).catch(err => {
-      console.error(
-        'Error updating the license dump. This is fatal for a published build.'
-      )
-      console.error(err)
-
-      if (!isDevelopmentBuild) {
-        process.exit(1)
-      }
-    })
   })
   .then(() => {
     if (shouldSkipPackaging) {

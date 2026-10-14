@@ -1,11 +1,4 @@
-import {
-  Menu,
-  app,
-  dialog,
-  BrowserWindow,
-  autoUpdater,
-  nativeTheme,
-} from 'electron'
+import { Menu, app, dialog, BrowserWindow, nativeTheme } from 'electron'
 import { shell } from '../lib/app-shell'
 import { Emitter, Disposable } from 'event-kit'
 import { join } from 'path'
@@ -28,7 +21,6 @@ import {
   terminateDesktopNotifications,
 } from './notifications'
 import { addTrustedIPCSender } from './trusted-ipc-sender'
-import { getUpdaterGUID } from '../lib/get-updater-guid'
 import { CLIAction } from '../lib/cli-action'
 
 export class AppWindow {
@@ -37,7 +29,6 @@ export class AppWindow {
 
   private _loadTime: number | null = null
   private _rendererReadyTime: number | null = null
-  private isDownloadingUpdate: boolean = false
 
   private minWidth = 960
   private minHeight = 660
@@ -100,7 +91,6 @@ export class AppWindow {
     this.shouldMaximizeOnShow = savedWindowState.isMaximized
 
     let quitting = false
-    let quittingEvenIfUpdating = false
     app.on('before-quit', () => {
       quitting = true
     })
@@ -110,39 +100,7 @@ export class AppWindow {
       event.returnValue = true
     })
 
-    ipcMain.on('will-quit-even-if-updating', event => {
-      quitting = true
-      quittingEvenIfUpdating = true
-      event.returnValue = true
-    })
-
-    ipcMain.on('cancel-quitting', event => {
-      quitting = false
-      quittingEvenIfUpdating = false
-      event.returnValue = true
-    })
-
     this.window.on('close', e => {
-      // On macOS, closing the window doesn't mean the app is quitting. If the
-      // app is updating, we will prevent the window from closing only when the
-      // app is also quitting.
-      if (
-        (!__DARWIN__ || quitting) &&
-        !quittingEvenIfUpdating &&
-        this.isDownloadingUpdate
-      ) {
-        e.preventDefault()
-        ipcWebContents.send(this.window.webContents, 'show-installing-update')
-
-        // Make sure the window is visible, so the user can see why we're
-        // preventing the app from quitting. This is important on macOS, where
-        // the window could be hidden/closed when the user tries to quit.
-        // It could also happen on Windows if the user quits the app from the
-        // task bar while it's in the background.
-        this.show()
-        return
-      }
-
       // on macOS, when the user closes the window we really just hide it. This
       // lets us activate quickly and keep all our interesting logic in the
       // renderer.
@@ -158,7 +116,6 @@ export class AppWindow {
         return
       }
       nativeTheme.removeAllListeners()
-      autoUpdater.removeAllListeners()
       terminateDesktopNotifications()
     })
   }
@@ -229,8 +186,6 @@ export class AppWindow {
     ipcMain.on('update-window-background-color', (_, color) => {
       this.window.setBackgroundColor(color)
     })
-
-    this.setupAutoUpdater()
   }
 
   /**
@@ -412,59 +367,6 @@ export class AppWindow {
     this.window.destroy()
   }
 
-  public setupAutoUpdater() {
-    autoUpdater.on('error', (error: Error) => {
-      this.isDownloadingUpdate = false
-      ipcWebContents.send(this.window.webContents, 'auto-updater-error', error)
-    })
-
-    autoUpdater.on('checking-for-update', () => {
-      this.isDownloadingUpdate = false
-      ipcWebContents.send(
-        this.window.webContents,
-        'auto-updater-checking-for-update'
-      )
-    })
-
-    autoUpdater.on('update-available', () => {
-      this.isDownloadingUpdate = true
-      ipcWebContents.send(
-        this.window.webContents,
-        'auto-updater-update-available'
-      )
-    })
-
-    autoUpdater.on('update-not-available', () => {
-      this.isDownloadingUpdate = false
-      ipcWebContents.send(
-        this.window.webContents,
-        'auto-updater-update-not-available'
-      )
-    })
-
-    autoUpdater.on('update-downloaded', () => {
-      this.isDownloadingUpdate = false
-      ipcWebContents.send(
-        this.window.webContents,
-        'auto-updater-update-downloaded'
-      )
-    })
-  }
-
-  public async checkForUpdates(url: string) {
-    try {
-      autoUpdater.setFeedURL({ url: await trySetUpdaterGuid(url) })
-      autoUpdater.checkForUpdates()
-    } catch (e) {
-      return e
-    }
-    return undefined
-  }
-
-  public quitAndInstallUpdate() {
-    autoUpdater.quitAndInstall()
-  }
-
   public minimizeWindow() {
     this.window.minimize()
   }
@@ -514,20 +416,5 @@ export class AppWindow {
   public async showOpenDialog(options: Electron.OpenDialogOptions) {
     const { filePaths } = await dialog.showOpenDialog(this.window, options)
     return filePaths.length > 0 ? filePaths[0] : null
-  }
-}
-
-const trySetUpdaterGuid = async (url: string) => {
-  try {
-    const id = await getUpdaterGUID()
-    if (!id) {
-      return url
-    }
-
-    const parsed = new URL(url)
-    parsed.searchParams.set('guid', id)
-    return parsed.toString()
-  } catch (e) {
-    return url
   }
 }

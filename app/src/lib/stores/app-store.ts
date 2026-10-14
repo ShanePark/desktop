@@ -130,10 +130,6 @@ import {
   updatePreferredAppMenuItemLabels,
   updateAccounts,
   setWindowZoomFactor,
-  onShowInstallingUpdate,
-  sendWillQuitEvenIfUpdatingSync,
-  quitApp,
-  sendCancelQuittingSync,
   saveTitleBarStyle,
   getTitleBarStyle,
   showOpenDialog,
@@ -413,7 +409,6 @@ import {
   ICustomIntegration,
   migratedCustomIntegration,
 } from '../custom-integration'
-import { updateStore } from '../../ui/lib/update-store'
 import { startTimer } from '../../ui/lib/timing'
 import { BypassReasonType } from '../../ui/secret-scanning/bypass-push-protection-dialog'
 import {
@@ -639,8 +634,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private windowState: WindowState | null = null
   private windowZoomFactor: number = 1
   private resizablePaneActive = false
-  private isUpdateAvailableBannerVisible: boolean = false
-  private isUpdateShowcaseVisible: boolean = false
 
   private askToMoveToApplicationsFolderSetting: boolean =
     askToMoveToApplicationsFolderDefault
@@ -840,8 +833,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.notificationsStore.onPullRequestCommentNotification(
       this.onPullRequestCommentNotification
     )
-
-    onShowInstallingUpdate(this.onShowInstallingUpdate)
   }
 
   private initializeWindowState = async () => {
@@ -911,12 +902,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this._showPopup({
       type: PopupType.InvalidatedToken,
       account,
-    })
-  }
-
-  private onShowInstallingUpdate = () => {
-    this._showPopup({
-      type: PopupType.InstallingUpdate,
     })
   }
 
@@ -1073,10 +1058,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this.apiRepositoriesStore.onDidUpdate(() => this.emitUpdate())
     this.apiRepositoriesStore.onDidError(error => this.emitError(error))
-
-    // updateStore is a global, App.tsx handles most of it but we carry the
-    // UpdateState in the AppState so we need to emit whenever it updates.
-    updateStore.onDidChange(() => this.emitUpdate())
 
     this.copilotStore.onDidUpdate(() => {
       this.syncCopilotModelsFromCache()
@@ -1291,8 +1272,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       pullRequestFilesListWidth: this.pullRequestFileListWidth,
       appMenuState: this.appMenu ? this.appMenu.openMenus : [],
       highlightAccessKeys: this.highlightAccessKeys,
-      isUpdateAvailableBannerVisible: this.isUpdateAvailableBannerVisible,
-      isUpdateShowcaseVisible: this.isUpdateShowcaseVisible,
       currentBanner: this.currentBanner,
       askToMoveToApplicationsFolderSetting:
         this.askToMoveToApplicationsFolderSetting,
@@ -1348,7 +1327,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       underlineLinks: this.underlineLinks,
       showDiffCheckMarks: this.showDiffCheckMarks,
       preferAbsoluteDates: this.preferAbsoluteDates,
-      updateState: updateStore.state,
       commitMessageGenerationDisclaimerLastSeen:
         this.commitMessageGenerationDisclaimerLastSeen,
       commitMessageGenerationButtonClicked:
@@ -7895,18 +7873,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
-  public _setUpdateBannerVisibility(visibility: boolean) {
-    this.isUpdateAvailableBannerVisible = visibility
-
-    this.emitUpdate()
-  }
-
-  public _setUpdateShowCaseVisibility(visibility: boolean) {
-    this.isUpdateShowcaseVisible = visibility
-
-    this.emitUpdate()
-  }
-
   public _setBanner(state: Banner) {
     this.currentBanner = state
     this.emitUpdate()
@@ -10161,18 +10127,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
         this.emitUpdate()
       }
     )
-  }
-
-  public _quitApp(evenIfUpdating: boolean) {
-    if (evenIfUpdating) {
-      sendWillQuitEvenIfUpdatingSync()
-    }
-
-    quitApp()
-  }
-
-  public _cancelQuittingApp() {
-    sendCancelQuittingSync()
   }
 
   public _setPullRequestSuggestedNextAction(

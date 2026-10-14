@@ -1,15 +1,9 @@
-import { readFile } from 'fs/promises'
-import * as Path from 'path'
-import * as semver from 'semver'
 import {
   ReleaseMetadata,
   ReleaseNote,
   ReleaseSummary,
 } from '../models/release-notes'
-import { getVersion } from '../ui/lib/app-proxy'
 import { formatDate } from './format-date'
-import { offsetFromNow } from './offset-from'
-import { encodePathAsUrl } from './path'
 import { getUserAgent } from './http'
 
 // expects a release note entry to contain a header and then some text
@@ -114,59 +108,3 @@ export async function getChangeLog(
     return []
   }
 }
-
-export async function generateReleaseSummary(
-  version?: string
-): Promise<ReadonlyArray<ReleaseSummary>> {
-  const lastTenReleases = await getChangeLog()
-  const currentVersion = new semver.SemVer(version ?? getVersion())
-  const recentReleases = lastTenReleases.filter(
-    r =>
-      semver.gt(new semver.SemVer(r.version), currentVersion) &&
-      new Date(r.pub_date).getTime() > offsetFromNow(-90, 'days')
-  )
-
-  // We should only be pulling release notes when a release just happened, so
-  // there should be one within the past 90 days. Thus, this is just precaution
-  // to ensure we always show at least the last set of release notes.
-  return recentReleases.length > 0
-    ? recentReleases.map(getReleaseSummary)
-    : [getReleaseSummary(lastTenReleases[0])]
-}
-
-/**
- * This method is used in conjunction with the Help > Show Popup > Release notes
- * menu item to test release notes on dev builds.
- **/
-export async function generateDevReleaseSummary(): Promise<
-  ReadonlyArray<ReleaseSummary>
-> {
-  // Remove version if want to use latest version in your dev build
-  const releases = [...(await generateReleaseSummary('3.0.0'))]
-
-  const pretextDraft = await readFile(
-    Path.join(__dirname, 'static', 'pretext-draft.md'),
-    'utf8'
-  ).catch(_ => null)
-
-  if (pretextDraft === null) {
-    return releases
-  }
-
-  return [
-    {
-      ...releases[0],
-      pretext: [{ kind: 'pretext', message: pretextDraft }],
-    },
-    ...releases.slice(1),
-  ]
-}
-
-export const ReleaseNoteHeaderLeftUri = encodePathAsUrl(
-  __dirname,
-  'static/release-note-header-left.svg'
-)
-export const ReleaseNoteHeaderRightUri = encodePathAsUrl(
-  __dirname,
-  'static/release-note-header-right.svg'
-)

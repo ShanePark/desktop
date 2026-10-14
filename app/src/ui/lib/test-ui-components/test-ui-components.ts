@@ -9,12 +9,10 @@ import {
   ExternalEditorError,
   suggestedExternalEditor,
 } from '../../../lib/editors/shared'
-import { updateStore } from '../update-store'
 import { enableTestMenuItems } from '../../../lib/feature-flag'
 import { Banner, BannerType } from '../../../models/banner'
 import { PopupType } from '../../../models/popup'
 import { CloningRepository } from '../../../models/cloning-repository'
-import { generateDevReleaseSummary } from '../../../lib/release-notes'
 import { ReleaseNote } from '../../../models/release-notes'
 import { getVersion } from '../app-proxy'
 import { Emoji } from '../../../lib/emoji'
@@ -43,8 +41,6 @@ export function showTestUI(
       return boomtown()
     case 'test-app-error':
       return testAppError()
-    case 'test-arm64-banner':
-      return showFakeUpdateBanner({ isArm64: true })
     case 'test-confirm-committing-conflicted-files':
       return showFakeConfirmCommittingConflictedFiles()
     case 'test-cherry-pick-conflicts-banner':
@@ -97,12 +93,8 @@ export function showTestUI(
         organizationName: 'test-org',
         endpoint: 'test-endpoint',
       })
-    case 'test-release-notes-popup':
-      return showFakeReleaseNotesPopup()
     case 'test-reorder-banner':
       return showFakeReorderBanner()
-    case 'test-showcase-update-banner':
-      return showFakeUpdateBanner({ isShowcase: true })
     case 'test-thank-you-banner':
       return showFakeThankYouBanner()
     case 'test-thank-you-popup':
@@ -152,19 +144,10 @@ export function showTestUI(
         certificate: mockCert,
         url: `https://www.github.com`,
       })
-    case 'test-update-banner':
-      return showFakeUpdateBanner({})
-    case 'test-prioritized-update-banner':
-      return showFakeUpdateBanner({
-        isPriority: true,
-        priorityInfoUrl: 'https://desktop.github.com',
-      })
     case 'test-update-existing-git-lfs-filters':
       return dispatcher.showPopup({ type: PopupType.LFSAttributeMismatch })
     case 'test-upstream-already-exists':
       return showFakeUpstreamAlreadyExists()
-    case 'test-about-dialog':
-      return dispatcher.showPopup({ type: PopupType.TestAbout })
     case 'test-cli-action':
       return dispatcher.showPopup({ type: PopupType.TestCLIAction })
     default:
@@ -183,28 +166,6 @@ export function showTestUI(
         'Test Error - to use default error handler' + crypto.randomUUID()
       )
     )
-  }
-
-  function showFakeUpdateBanner(options: {
-    isArm64?: boolean
-    isShowcase?: boolean
-    isPriority?: boolean
-    priorityInfoUrl?: string
-  }) {
-    updateStore.setIsx64ToARM64ImmediateAutoUpdate(options.isArm64 === true)
-
-    if (options.isShowcase) {
-      dispatcher.setUpdateShowCaseVisibility(true)
-      return
-    }
-
-    if (options.isPriority !== undefined) {
-      updateStore.setPrioritizeUpdate(options.isPriority)
-    }
-
-    updateStore.setPrioritizeUpdateInfoUrl(options.priorityInfoUrl)
-
-    dispatcher.setUpdateBannerVisibility(true)
   }
 
   function showFakeConfirmCommittingConflictedFiles() {
@@ -386,13 +347,6 @@ export function showTestUI(
       type: PopupType.PushRejectedDueToMissingWorkflowScope,
       rejectedPath: `.gitub/workflows/test.yml`,
       repository,
-    })
-  }
-
-  async function showFakeReleaseNotesPopup() {
-    dispatcher.showPopup({
-      type: PopupType.ReleaseNotes,
-      newReleases: await generateDevReleaseSummary(),
     })
   }
 

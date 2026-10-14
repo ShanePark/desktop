@@ -185,58 +185,58 @@ async function main() {
       const data = new Map([[key(a.repository.path), { ...snap(0), checkedAt: 0 }]])
       Assert.deepEqual(ids(project([group('all', [a])], data, prefs('recent', true), 'activity')), ['1'])
     })
-    test('stale snapshots fall back to current row indicators for exclusive Working visibility', () => {
-      const dirty = {
-        ...row(1, 'dirty'),
-        changedFilesCount: 3,
-        aheadBehind: { ahead: 0, behind: 1 },
-      }
-      const ahead = {
-        ...row(2, 'ahead'),
-        aheadBehind: { ahead: 2, behind: 0 },
-      }
-      const clean = {
-        ...row(3, 'clean'),
-        aheadBehind: { ahead: 0, behind: 0 },
-      }
+    const working = (rows, data) => {
       const organization = {
         groups: [{ id: 'group-a', name: 'A' }],
-        assignments: {
-          [dirty.repository.path]: 'group-a',
-          [ahead.repository.path]: 'group-a',
-          [clean.repository.path]: 'group-a',
-        },
+        assignments: Object.fromEntries(rows.map(r => [r.repository.path, 'group-a'])),
       }
+      const result = project([group('all', rows)], data, prefs(), 'activity', organization)
+      return {
+        working: result.find(g => g.identifier === '_Working_').items,
+        saved: result.find(g => g.identifier === 'group-a').items.map(r => r.id),
+      }
+    }
+    test('unverified or failed snapshots keep last known Working membership over row indicators', () => {
+      const dirty = { ...row(1, 'dirty'), aheadBehind: { ahead: 0, behind: 1 } }
+      const ahead = row(2, 'ahead')
+      const clean = { ...row(3, 'clean'), changedFilesCount: 3, aheadBehind: { ahead: 2, behind: 0 } }
       for (const invalid of [{ checkedAt: 0 }, { error: true }]) {
-        const stale = { ...snap(0), unpushedCount: 0, ...invalid }
-        const positive = { ...snap(5, 500), unpushedCount: 4, ...invalid }
-        const result = project(
-          [group('all', [dirty, ahead, clean])],
-          new Map([
-            [key(dirty.repository.path), stale],
-            [key(ahead.repository.path), stale],
-            [key(clean.repository.path), positive],
-          ]),
-          prefs(),
-          'activity',
-          organization
-        )
-        const working = result.find(g => g.identifier === '_Working_').items
-        Assert.deepEqual(working.map(r => r.id).sort(), ['1', '2'])
-        Assert.equal(working.find(r => r.id === '1').changedFilesCount, 3)
-        Assert.deepEqual(working.find(r => r.id === '2').aheadBehind, {
-          ahead: 2,
-          behind: 0,
-        })
-        Assert.deepEqual(
-          result.find(g => g.identifier === 'group-a').items.map(r => r.id),
-          ['3']
-        )
-        Assert.equal(
-          result.find(g => g.identifier === 'group-a').items[0].workingGroupName,
-          undefined
-        )
+        const result = working([dirty, ahead, clean], new Map([
+          [key(dirty.repository.path), { ...snap(5, 500), unpushedCount: 0, ...invalid }],
+          [key(ahead.repository.path), { ...snap(0), unpushedCount: 4, ...invalid }],
+          [key(clean.repository.path), { ...snap(0), unpushedCount: 0, ...invalid }],
+        ]))
+        Assert.deepEqual(result.working.map(r => r.id).sort(), ['1', '2'])
+        Assert.equal(result.working.find(r => r.id === '1').changedFilesCount, 5)
+        Assert.deepEqual(result.working.find(r => r.id === '2').aheadBehind, { ahead: 4, behind: 0 })
+        Assert.equal(result.working.find(r => r.id === '1').workingGroupName, 'A')
+        Assert.deepEqual(result.saved, ['3'])
       }
+    })
+    test('rows without snapshot data fall back to row indicators', () => {
+      const dirty = { ...row(1, 'dirty'), changedFilesCount: 3 }
+      const ahead = { ...row(2, 'ahead'), aheadBehind: { ahead: 2, behind: 0 } }
+      const clean = { ...row(3, 'clean'), aheadBehind: { ahead: 0, behind: 0 } }
+      // A failed first check has no earlier baseline to preserve.
+      const failed = { ...snap(0), fingerprint: '', checkedAt: 1000, error: true }
+      const result = working([dirty, ahead, clean], new Map([[key(ahead.repository.path), failed]]))
+      Assert.deepEqual(result.working.map(r => r.id).sort(), ['1', '2'])
+      Assert.equal(result.working.find(r => r.id === '1').changedFilesCount, 3)
+      Assert.deepEqual(result.working.find(r => r.id === '2').aheadBehind, { ahead: 2, behind: 0 })
+      Assert.deepEqual(result.saved, ['3'])
+    })
+    test('a successful clean recheck removes a restored row from Working', async () => {
+      const restored = { ...row(1, 'restored'), aheadBehind: { ahead: 0, behind: 0 } }
+      const path = restored.repository.path
+      const initial = new Map([[key(path), { ...snap(2, 100), unpushedCount: 1, checkedAt: 0 }]])
+      Assert.deepEqual(working([restored], initial).working.map(r => r.id), ['1'])
+      let final
+      const monitor = new Monitor(async () => ({ ...snap(0), unpushedCount: 0 }), s => { final = s }, initial, 2, () => 2000)
+      monitor.setPaths([path]); await monitor.refresh()
+      Assert.equal(final.repositories.get(key(path)).checkedAt, 2000)
+      const result = working([restored], final.repositories)
+      Assert.deepEqual(result.working, [])
+      Assert.deepEqual(result.saved, ['1'])
     })
     test('name mode preserves original groups and pin order', () => {
       const z = row(2, 'zeta'), a = row(1, 'alpha')
@@ -421,9 +421,126 @@ async function main() {
       let active = 0, peak = 0, calls = 0
       const monitor = new Monitor(async () => { calls++; active++; peak = Math.max(peak, active); await sleep(5); active--; return snap(1) }, () => {})
       monitor.setPaths([1, 2, 3, 4, 1].map(n => Path.resolve(`fixture/${n}`)))
-      const first = monitor.refresh(); const second = monitor.refresh()
-      Assert.equal(first, second); await first
-      Assert.equal(calls, 4); Assert.equal(peak, 2)
+      const first = monitor.refresh(); const second = monitor.refresh(); const third = monitor.refresh()
+      Assert.notEqual(first, second); Assert.equal(second, third)
+      await first
+      Assert.equal(calls, 4)
+      await second
+      Assert.equal(calls, 8); Assert.equal(peak, 2)
+    })
+    test('requests during a pass run one follow-up with the strictest window', async () => {
+      let clock = 50000
+      const recent = Path.resolve('recent')
+      const older = Path.resolve('older')
+      let unblock, startedResolve
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const gate = new Promise(resolve => { unblock = resolve })
+      const calls = []
+      const monitor = new Monitor(async path => {
+        calls.push(path)
+        if (calls.length === 1) { startedResolve(); await gate }
+        return snap(1)
+      }, s => {
+        // Results from the first pass are 5s old when the follow-up starts.
+        if (!s.checking) clock += 5000
+      }, new Map(), 1, () => clock)
+      monitor.setPaths([recent, older])
+      const pending = monitor.refresh(); await started
+      const loose = monitor.refresh({ maxAge: 15000 })
+      const strict = monitor.refresh({ maxAge: 3000 })
+      Assert.equal(loose, strict)
+      unblock(); await pending
+      Assert.deepEqual(calls, [recent, older])
+      await strict
+      Assert.deepEqual(calls, [recent, older, recent, older])
+    })
+    test('a stopped monitor does not run a queued follow-up pass', async () => {
+      let unblock, startedResolve, calls = 0
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const gate = new Promise(resolve => { unblock = resolve })
+      const monitor = new Monitor(async () => { calls++; startedResolve(); await gate; return snap(1) }, () => {}, new Map(), 1)
+      monitor.setPaths([Path.resolve('a')])
+      const pending = monitor.refresh(); await started
+      const followUp = monitor.refresh()
+      monitor.stop(); unblock(); await pending; await followUp
+      Assert.equal(calls, 1)
+    })
+    test('invalidated paths are rechecked despite a fresh snapshot', async () => {
+      const now = 60000
+      const changed = Path.resolve('changed')
+      const unchanged = Path.resolve('unchanged')
+      const calls = []
+      const initial = new Map([
+        [key(changed), { ...snap(1), checkedAt: now - 1 }],
+        [key(unchanged), { ...snap(1), checkedAt: now - 1 }],
+      ])
+      const monitor = new Monitor(async path => { calls.push(path); return { ...snap(0), checkedAt: now } }, () => {}, initial, 2, () => now)
+      monitor.setPaths([changed, unchanged])
+      monitor.invalidate([changed, Path.resolve('unregistered')])
+      await monitor.refresh({ maxAge: 15000 })
+      Assert.deepEqual(calls, [changed])
+      // The completed sample satisfies the invalidation.
+      await monitor.refresh({ maxAge: 15000 })
+      Assert.deepEqual(calls, [changed])
+    })
+    test('a sample started before invalidation does not satisfy it', async () => {
+      const now = 70000
+      const path = Path.resolve('in-flight')
+      let unblock, startedResolve
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const gate = new Promise(resolve => { unblock = resolve })
+      let calls = 0
+      let final
+      const monitor = new Monitor(async () => {
+        calls++
+        if (calls === 1) { startedResolve(); await gate; return snap(2) }
+        return snap(0)
+      }, s => { if (!s.checking) final = s }, new Map(), 1, () => now)
+      monitor.setPaths([path])
+      const pending = monitor.refresh(); await started
+      monitor.invalidate([path])
+      unblock(); await pending
+      Assert.equal(calls, 1)
+      // The pre-invalidation result is not considered fresh.
+      await monitor.refresh({ maxAge: 15000 })
+      Assert.equal(calls, 2)
+      Assert.equal(final.repositories.get(key(path)).changedFilesCount, 0)
+      await monitor.refresh({ maxAge: 15000 })
+      Assert.equal(calls, 2)
+    })
+    test('invalidation during a pass is resolved by its follow-up pass', async () => {
+      const path = Path.resolve('committed')
+      let unblock, startedResolve
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const gate = new Promise(resolve => { unblock = resolve })
+      let calls = 0
+      let final
+      const monitor = new Monitor(async () => {
+        calls++
+        if (calls === 1) { startedResolve(); await gate; return snap(2) }
+        return snap(0)
+      }, s => { if (!s.checking) final = s }, new Map(), 1, () => 80000)
+      monitor.setPaths([path])
+      const pending = monitor.refresh(); await started
+      monitor.invalidate([path])
+      const followUp = monitor.refresh({ maxAge: 15000 })
+      unblock(); await pending; await followUp
+      Assert.equal(calls, 2)
+      Assert.equal(final.repositories.get(key(path)).changedFilesCount, 0)
+    })
+    test('the tick window rechecks the previous tick but reuses a forced check', async () => {
+      const now = 90000
+      const previousTick = Path.resolve('previous-tick')
+      const forced = Path.resolve('forced')
+      const calls = []
+      const initial = new Map([
+        [key(previousTick), { ...snap(1), checkedAt: now - 14000 }],
+        [key(forced), { ...snap(1), checkedAt: now - 2000 }],
+      ])
+      const monitor = new Monitor(async path => { calls.push(path); return snap(1) }, () => {}, initial, 1, () => now)
+      monitor.setPaths([previousTick, forced])
+      await monitor.refresh({ maxAge: 7500 })
+      Assert.deepEqual(calls, [previousTick])
     })
     test('stop drops queued jobs and suppresses late UI updates', async () => {
       let unblock, startedResolve, calls = 0, updates = 0

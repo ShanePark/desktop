@@ -107,8 +107,9 @@ Other things to note about the Windows packaging process:
 
 ### Linux
 
-Refer to the [`shiftkey/desktop`](https://github.com/shiftkey/desktop) fork
-for packaging details about Linux.
+On Linux, `script/package.ts` runs `electron-builder` with
+`script/electron-builder-linux.yml`, and builds the Debian and RPM installers
+in `script/package-debian.ts` and `script/package-redhat.ts`.
 
 ## `script/publish.ts`
 

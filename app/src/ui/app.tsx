@@ -14,18 +14,12 @@ import { Dispatcher } from './dispatcher'
 import { AppStore, GitHubUserStore, IssuesStore } from '../lib/stores'
 import { assertNever } from '../lib/fatal-error'
 import { shell } from '../lib/app-shell'
-import { updateStore, UpdateStatus } from './lib/update-store'
 import { RetryAction } from '../models/retry-actions'
 import { FetchType } from '../models/fetch'
 import { shouldRenderApplicationMenu } from './lib/features'
 import { matchExistingRepository } from '../lib/repository-matching'
 import { getVersion, getName } from './lib/app-proxy'
-import {
-  getOS,
-  isOSNoLongerSupportedByElectron,
-  isMacOSAndNoLongerSupportedByElectron,
-  isWindowsAndNoLongerSupportedByElectron,
-} from '../lib/get-os'
+import { getOS, isOSNoLongerSupportedByElectron } from '../lib/get-os'
 import { MenuEvent, isTestMenuEvent } from '../main-process/menu'
 import {
   Repository,
@@ -70,7 +64,7 @@ import {
 import { DiscardChanges } from './discard-changes'
 import { Welcome } from './welcome'
 import { AppMenuBar } from './app-menu'
-import { UpdateAvailable, renderBanner } from './banners'
+import { renderBanner } from './banners'
 import { Preferences } from './preferences'
 import { ConfirmRestart } from './preferences/confirm-restart'
 import { CopilotSettingsDialog } from './preferences/copilot-settings-dialog'
@@ -92,18 +86,15 @@ import { InstallGit } from './install-git'
 import { EditorError } from './editor'
 import { About } from './about'
 import { Publish } from './publish-repository'
-import { Acknowledgements } from './acknowledgements'
 import { UntrustedCertificate } from './untrusted-certificate'
 import { NoRepositoriesView } from './no-repositories'
 import { ConfirmRemoveRepository } from './remove-repository'
-import { TermsAndConditions } from './terms-and-conditions'
 import { PushBranchCommits } from './branches'
 import { CLIInstalled } from './cli-installed'
 import { GenericGitAuthentication } from './generic-git-auth'
 import { ShellError } from './shell'
 import { InitializeLFS, AttributeMismatch } from './lfs'
 import { UpstreamAlreadyExists } from './upstream-already-exists'
-import { ReleaseNotes } from './release-notes'
 import { DeletePullRequest } from './delete-branch/delete-pull-request-dialog'
 import { CommitConflictsWarning } from './merge-conflicts'
 import { AppTheme } from './app-theme'
@@ -183,7 +174,6 @@ import { OpenPullRequestDialog } from './open-pull-request/open-pull-request-dia
 import { sendNonFatalException } from '../lib/helpers/non-fatal-exception'
 import { ICustomIntegration } from '../lib/custom-integration'
 import { createCommitURL } from '../lib/commit-url'
-import { InstallingUpdate } from './installing-update/installing-update'
 import { DialogStackContext } from './dialog'
 import { TestNotifications } from './test-notifications/test-notifications'
 import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store'
@@ -197,7 +187,6 @@ import { isCertificateErrorSuppressedFor } from '../lib/suppress-certificate-err
 import { webUtils } from 'electron'
 import { showTestUI } from './lib/test-ui-components/test-ui-components'
 import { ConfirmCommitFilteredChanges } from './changes/confirm-commit-filtered-changes-dialog'
-import { AboutTestDialog } from './about/about-test-dialog'
 import { TestCLIActionDialog } from './cli-action/test-cli-action-dialog'
 import { TestCopilotSnapshotCardDialog } from './preferences/test-copilot-snapshot-card-dialog'
 import {
@@ -231,11 +220,6 @@ import { WorktreeEntry } from '../models/worktree'
 
 const MinuteInMilliseconds = 1000 * 60
 const HourInMilliseconds = MinuteInMilliseconds * 60
-
-/**
- * Check for updates every 4 hours
- */
-const UpdateCheckInterval = 4 * HourInMilliseconds
 
 /**
  * Send usage stats every 4 hours
@@ -328,30 +312,6 @@ export class App extends React.Component<IAppProps, IAppState> {
 
     ipcRenderer.on('menu-event', (_, name) => this.onMenuEvent(name))
 
-    updateStore.onDidChange(async state => {
-      const status = state.status
-
-      if (
-        !(__RELEASE_CHANNEL__ === 'development') &&
-        status === UpdateStatus.UpdateReady
-      ) {
-        this.props.dispatcher.setUpdateBannerVisibility(true)
-      }
-
-      if (
-        status !== UpdateStatus.UpdateReady &&
-        (await updateStore.isUpdateShowcase())
-      ) {
-        this.props.dispatcher.setUpdateShowCaseVisibility(true)
-      }
-    })
-
-    updateStore.onError(error => {
-      log.error(`Error checking for updates`, error)
-
-      this.props.dispatcher.postError(error)
-    })
-
     ipcRenderer.on('launch-timing-stats', (_, stats) => {
       console.info(`App ready time: ${stats.mainReadyTime}ms`)
       console.info(`Load time: ${stats.loadTime}ms`)
@@ -392,20 +352,6 @@ export class App extends React.Component<IAppProps, IAppState> {
     setInterval(() => this.props.dispatcher.reportStats(), SendStatsInterval)
 
     this.props.dispatcher.installGlobalLFSFilters(false)
-
-    // We only want to automatically check for updates on beta and prod
-    if (
-      __RELEASE_CHANNEL__ !== 'development' &&
-      __RELEASE_CHANNEL__ !== 'test'
-    ) {
-      setInterval(() => this.checkForUpdates(true), UpdateCheckInterval)
-      this.checkForUpdates(true)
-    } else if (await updateStore.isUpdateShowcase()) {
-      // The only purpose of this call is so we can see the showcase on dev/test
-      // env. Prod and beta environment will trigger this during automatic check
-      // for updates.
-      this.props.dispatcher.setUpdateShowCaseVisibility(true)
-    }
 
     log.info(`launching: ${getVersion()} (${getOS()})`)
     log.info(`execPath: '${process.execPath}'`)
@@ -642,31 +588,6 @@ export class App extends React.Component<IAppProps, IAppState> {
   private async goToCommitMessage() {
     await this.showChanges(false)
     this.props.dispatcher.setCommitMessageFocus(true)
-  }
-
-  private checkForUpdates(
-    inBackground: boolean,
-    skipGuidCheck: boolean = false
-  ) {
-    if (__LINUX__ || __RELEASE_CHANNEL__ === 'development') {
-      return
-    }
-
-    if (isWindowsAndNoLongerSupportedByElectron()) {
-      log.error(
-        `Can't check for updates on Windows 8.1 or older. Next available update only supports Windows 10 and later`
-      )
-      return
-    }
-
-    if (isMacOSAndNoLongerSupportedByElectron()) {
-      log.error(
-        `Can't check for updates on macOS 12 or older. Next available update only supports macOS 13 and later`
-      )
-      return
-    }
-
-    updateStore.checkForUpdates(inBackground, skipGuidCheck)
   }
 
   private updateBranchWithContributionTargetBranch() {
@@ -1536,9 +1457,6 @@ export class App extends React.Component<IAppProps, IAppState> {
     )
   }
 
-  private onUpdateAvailableDismissed = () =>
-    this.props.dispatcher.setUpdateBannerVisibility(false)
-
   private allPopupContent(): JSX.Element | null {
     const { allPopups } = this.state
 
@@ -1971,11 +1889,6 @@ export class App extends React.Component<IAppProps, IAppState> {
             applicationName={getName()}
             applicationVersion={version}
             applicationArchitecture={process.arch}
-            onCheckForNonStaggeredUpdates={this.onCheckForNonStaggeredUpdates}
-            onShowAcknowledgements={this.showAcknowledgements}
-            onShowTermsAndConditions={this.showTermsAndConditions}
-            updateState={this.state.updateState}
-            onQuitAndInstall={this.onQuitAndInstall}
           />
         )
       case PopupType.PublishRepository:
@@ -1998,27 +1911,12 @@ export class App extends React.Component<IAppProps, IAppState> {
             onContinue={this.onContinueWithUntrustedCertificate}
           />
         )
-      case PopupType.Acknowledgements:
-        return (
-          <Acknowledgements
-            key="acknowledgements"
-            onDismissed={onPopupDismissedFn}
-            applicationVersion={getVersion()}
-          />
-        )
       case PopupType.RemoveRepository:
         return (
           <ConfirmRemoveRepository
             key="confirm-remove-repository"
             repository={popup.repository}
             onConfirmation={this.onConfirmRepoRemoval}
-            onDismissed={onPopupDismissedFn}
-          />
-        )
-      case PopupType.TermsAndConditions:
-        return (
-          <TermsAndConditions
-            key="terms-and-conditions"
             onDismissed={onPopupDismissedFn}
           />
         )
@@ -2111,16 +2009,6 @@ export class App extends React.Component<IAppProps, IAppState> {
             onDismissed={onPopupDismissedFn}
             onUpdate={this.onUpdateExistingUpstreamRemote}
             onIgnore={this.onIgnoreExistingUpstreamRemote}
-          />
-        )
-      case PopupType.ReleaseNotes:
-        return (
-          <ReleaseNotes
-            key="release-notes"
-            emoji={this.state.emoji}
-            newReleases={popup.newReleases}
-            onDismissed={onPopupDismissedFn}
-            underlineLinks={this.state.underlineLinks}
           />
         )
       case PopupType.DeletePullRequest:
@@ -2737,15 +2625,6 @@ export class App extends React.Component<IAppProps, IAppState> {
           />
         )
       }
-      case PopupType.InstallingUpdate: {
-        return (
-          <InstallingUpdate
-            key="installing-update"
-            dispatcher={this.props.dispatcher}
-            onDismissed={onPopupDismissedFn}
-          />
-        )
-      }
       case PopupType.TestNotifications: {
         return (
           <TestNotifications
@@ -2808,15 +2687,6 @@ export class App extends React.Component<IAppProps, IAppState> {
           />
         )
       }
-      case PopupType.TestAbout:
-        return (
-          <AboutTestDialog
-            key="about"
-            onDismissed={onPopupDismissedFn}
-            onShowAcknowledgements={this.showAcknowledgements}
-            onShowTermsAndConditions={this.showTermsAndConditions}
-          />
-        )
       case PopupType.TestCLIAction:
         return (
           <TestCLIActionDialog
@@ -3228,9 +3098,6 @@ export class App extends React.Component<IAppProps, IAppState> {
     this.props.dispatcher.openShell(path, true)
   }
 
-  private onCheckForNonStaggeredUpdates = () =>
-    this.checkForUpdates(false, true)
-
   private onSaveCopilotBYOKProvider = (
     provider: IBYOKProvider,
     secret: string | null | undefined
@@ -3245,16 +3112,6 @@ export class App extends React.Component<IAppProps, IAppState> {
   private onConfirmDeleteCopilotBYOKProvider = (provider: IBYOKProvider) => {
     this.props.dispatcher.deleteCopilotBYOKProvider(provider.id)
   }
-
-  private showAcknowledgements = () => {
-    this.props.dispatcher.showPopup({ type: PopupType.Acknowledgements })
-  }
-
-  private showTermsAndConditions = () => {
-    this.props.dispatcher.showPopup({ type: PopupType.TermsAndConditions })
-  }
-
-  private onQuitAndInstall = () => updateStore.quitAndInstallUpdate()
 
   private renderPopups() {
     const popupContent = this.allPopupContent()
@@ -3859,11 +3716,6 @@ export class App extends React.Component<IAppProps, IAppState> {
         this.props.dispatcher,
         this.onBannerDismissed
       )
-    } else if (
-      this.state.isUpdateAvailableBannerVisible ||
-      this.state.isUpdateShowcaseVisible
-    ) {
-      banner = this.renderUpdateBanner()
     }
     return (
       <div role="alert" aria-atomic="false">
@@ -3878,24 +3730,6 @@ export class App extends React.Component<IAppProps, IAppState> {
           )}
         </TransitionGroup>
       </div>
-    )
-  }
-
-  private renderUpdateBanner() {
-    return (
-      <UpdateAvailable
-        dispatcher={this.props.dispatcher}
-        newReleases={updateStore.state.newReleases}
-        isX64ToARM64ImmediateAutoUpdate={
-          updateStore.state.isX64ToARM64ImmediateAutoUpdate
-        }
-        prioritizeUpdate={updateStore.state.prioritizeUpdate}
-        prioritizeUpdateInfoUrl={updateStore.state.prioritizeUpdateInfoUrl}
-        onDismissed={this.onUpdateAvailableDismissed}
-        isUpdateShowcaseVisible={this.state.isUpdateShowcaseVisible}
-        emoji={this.state.emoji}
-        key={'update-available'}
-      />
     )
   }
 

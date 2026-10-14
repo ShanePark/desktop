@@ -126,10 +126,6 @@ export function buildTestMenu() {
       label: 'Show popup',
       submenu: [
         {
-          label: 'Release notes',
-          click: emit('test-release-notes-popup'),
-        },
-        {
           label: 'Thank you',
           click: emit('test-thank-you-popup'),
         },
@@ -142,10 +138,6 @@ export function buildTestMenu() {
           click: emit('test-icons'),
         },
         {
-          label: 'About dialog (test mode)',
-          click: emit('test-about-dialog'),
-        },
-        {
           label: 'Copilot snapshot card',
           click: emit('test-copilot-snapshot-card'),
         },
@@ -154,22 +146,6 @@ export function buildTestMenu() {
     {
       label: 'Show banner',
       submenu: [
-        {
-          label: 'Update banner',
-          click: emit('test-update-banner'),
-        },
-        {
-          label: 'Update banner (priority)',
-          click: emit('test-prioritized-update-banner'),
-        },
-        {
-          label: `Showcase Update banner`,
-          click: emit('test-showcase-update-banner'),
-        },
-        {
-          label: `${__DARWIN__ ? 'Apple silicon' : 'Arm64'} banner`,
-          click: emit('test-arm64-banner'),
-        },
         {
           label: 'Thank you',
           click: emit('test-thank-you-banner'),

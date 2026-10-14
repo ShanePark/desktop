@@ -523,15 +523,6 @@ export function buildDefaultMenuTemplate({
     })
   }
 
-  const submitIssueItem: Electron.MenuItemConstructorOptions = {
-    label: __DARWIN__ ? 'Report Issue…' : 'Report issue…',
-    click() {
-      shell
-        .openExternal('https://github.com/shiftkey/desktop/issues/new/choose')
-        .catch(err => log.error('Failed opening issue creation page', err))
-    },
-  }
-
   const showUserGuides: Electron.MenuItemConstructorOptions = {
     label: 'Show User Guides',
     click() {
@@ -568,12 +559,7 @@ export function buildDefaultMenuTemplate({
     },
   }
 
-  const helpItems = [
-    submitIssueItem,
-    showUserGuides,
-    showKeyboardShortcuts,
-    showLogsItem,
-  ]
+  const helpItems = [showUserGuides, showKeyboardShortcuts, showLogsItem]
 
   helpItems.push(...buildTestMenu())
 

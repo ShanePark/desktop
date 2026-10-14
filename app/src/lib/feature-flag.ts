@@ -57,18 +57,6 @@ export function enableUnhandledRejectionReporting(): boolean {
   return enableBetaFeatures()
 }
 
-/**
- * Should we allow x64 apps running under ARM translation to auto-update to
- * ARM64 builds?
- */
-export function enableUpdateFromEmulatedX64ToARM64(): boolean {
-  if (__DARWIN__) {
-    return true
-  }
-
-  return enableBetaFeatures()
-}
-
 /** Should we show previous tags as suggestions? */
 export function enablePreviousTagSuggestions(): boolean {
   return enableBetaFeatures()

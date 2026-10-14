@@ -6,7 +6,6 @@
  * Provides:
  *  - `app`  — the ElectronApplication instance
  *  - `mainWindow` — the main BrowserWindow page
- *  - `mockServer` — the mock update server (with control helpers)
  *
  * All fixtures are scoped to the **worker** so the app launches once
  * and all tests in the file share the same session (one Electron
@@ -14,7 +13,6 @@
  */
 
 import fs from 'fs'
-import http from 'http'
 import os from 'os'
 import path from 'path'
 import { spawnSync } from 'child_process'
@@ -25,12 +23,6 @@ import {
 } from '@playwright/test'
 import { _electron as electron } from 'playwright'
 import { ensureSmokeTestRepository, smokeRepoPath } from './test-helpers'
-import {
-  createMockUpdateServer,
-  MOCK_CONTROL_URL,
-  type IMockUpdateServer,
-  type UpdateBehavior,
-} from './mock-update-server'
 import { getDistPath, getExecutableName } from '../../../script/dist-info'
 import { getProductName } from '../../package-info'
 
@@ -111,30 +103,6 @@ export function terminateWindowsUpdaterProcesses() {
 
 // ── Helpers exposed to tests ────────────────────────────────────────
 
-type MockControlAction =
-  | `set-behavior/${UpdateBehavior}`
-  | 'reset-requests'
-  | 'requests'
-  | 'behavior'
-
-export function controlMockServer(action: MockControlAction): Promise<string> {
-  return new Promise((resolve, reject) => {
-    http
-      .get(`${MOCK_CONTROL_URL}/${action}`, res => {
-        let data = ''
-        res.on('data', (chunk: string) => (data += chunk))
-        res.on('end', () => resolve(data))
-      })
-      .on('error', reject)
-  })
-}
-
-export async function getMockRequests(): Promise<
-  ReadonlyArray<{ method: string; url: string }>
-> {
-  return JSON.parse(await controlMockServer('requests'))
-}
-
 export async function dismissMoveToApplicationsDialog(page: Page) {
   if (process.platform !== 'darwin') {
     return
@@ -155,7 +123,6 @@ type E2EFixtures = {
   prepareRepository: () => void
   app: ElectronApplication
   mainWindow: Page
-  mockServer: IMockUpdateServer
 }
 
 export const test = base.extend<{}, E2EFixtures>({
@@ -167,9 +134,8 @@ export const test = base.extend<{}, E2EFixtures>({
   ],
 
   // Worker-scoped: one Electron app per test file.
-  // Depends on mockServer so the update server is ready before launch.
   app: [
-    async ({ mockServer, prepareRepository }, use) => {
+    async ({ prepareRepository }, use) => {
       // Setup directories
       prepareRepository()
 
@@ -247,15 +213,6 @@ export const test = base.extend<{}, E2EFixtures>({
         .context()
         .tracing.stop({ path: tracePath })
         .catch(() => {})
-    },
-    { scope: 'worker' },
-  ],
-
-  mockServer: [
-    async ({}, use) => {
-      const server = await createMockUpdateServer()
-      await use(server)
-      await server.close()
     },
     { scope: 'worker' },
   ],

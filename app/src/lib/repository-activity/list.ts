@@ -49,6 +49,16 @@ export function activityIsUnknown(
 }
 
 /**
+ * The last known activity, including restored or failed checks that preserve
+ * earlier values. A failure without an earlier baseline carries no data.
+ */
+function lastKnownActivity(
+  activity: IRepositoryActivity | undefined
+): IRepositoryActivity | undefined {
+  return activity?.error && activity.fingerprint === '' ? undefined : activity
+}
+
+/**
  * Name mode retains original groups. Activity modes form a globally sorted
  * list. Optional worktree rows stay with their parent for navigation.
  */
@@ -60,10 +70,9 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   organization?: IRepositoryOrganization
 ): ReadonlyArray<IActivityListGroup<T, G>> {
   const snapshot = (row: T) => activities.get(activityKey(activityPath(row)))
-  const currentActivity = (row: T) => {
-    const activity = snapshot(row)
-    return activityIsUnknown(activity) ? undefined : activity
-  }
+  // Unverified and failed snapshots keep rows in place until a successful
+  // check replaces them; the monitor still treats them as stale.
+  const currentActivity = (row: T) => lastKnownActivity(snapshot(row))
   const dirty = (row: T) =>
     (currentActivity(row)?.changedFilesCount ?? row.changedFilesCount) > 0
   const include = (row: T) =>

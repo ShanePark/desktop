@@ -124,22 +124,19 @@ describe('PopupManager', () => {
       const popupManager = new PopupManager(2)
       popupManager.addPopup({ type: PopupType.About })
       popupManager.addPopup({ type: PopupType.SignIn })
-      popupManager.addPopup({ type: PopupType.TermsAndConditions })
+      popupManager.addPopup({ type: PopupType.CLIInstalled })
 
       const aboutPopups = popupManager.getPopupsOfType(PopupType.About)
       const signInPoups = popupManager.getPopupsOfType(PopupType.SignIn)
-      const termsAndConditionsPoups = popupManager.getPopupsOfType(
-        PopupType.TermsAndConditions
+      const cliInstalledPopups = popupManager.getPopupsOfType(
+        PopupType.CLIInstalled
       )
       assert.equal(aboutPopups.length, 0)
       assert.equal(signInPoups.length, 1)
-      assert.equal(termsAndConditionsPoups.length, 1)
+      assert.equal(cliInstalledPopups.length, 1)
 
       assert.equal(signInPoups.at(0)?.type, PopupType.SignIn)
-      assert.equal(
-        termsAndConditionsPoups.at(0)?.type,
-        PopupType.TermsAndConditions
-      )
+      assert.equal(cliInstalledPopups.at(0)?.type, PopupType.CLIInstalled)
     })
   })
 
@@ -311,7 +308,7 @@ describe('PopupManager', () => {
       const popup1 = popupManager.addPopup({ type: PopupType.About })
       const popup2 = popupManager.addPopup({ type: PopupType.SignIn })
       const popup3 = popupManager.addPopup({
-        type: PopupType.TermsAndConditions,
+        type: PopupType.CLIInstalled,
       })
 
       assert.equal(popup1.id, 1)

@@ -135,7 +135,12 @@ interface IRepositoriesListState {
 }
 
 const RowHeight = 29
-const ActivityFreshnessWindow = 15 * 1000
+const ActivityRefreshInterval = 15 * 1000
+/**
+ * Shorter than the interval so paths sampled by the previous tick are always
+ * rechecked, while a forced refresh just before a tick can still be reused.
+ */
+const ActivityTickFreshnessWindow = ActivityRefreshInterval / 2
 
 /**
  * Iterate over all groups until a list item is found that matches
@@ -177,6 +182,23 @@ function activityDisplayChanged(
   )
 }
 
+/** The app store's indicator values that should invalidate cached activity. */
+function localStateSignatures(
+  lookup: ReadonlyMap<number, ILocalRepositoryState>
+): ReadonlyMap<number, string> {
+  const signatures = new Map<number, string>()
+  for (const [id, state] of lookup) {
+    const { aheadBehind } = state
+    signatures.set(
+      id,
+      `${state.changedFilesCount}:${aheadBehind?.ahead ?? '-'}:${
+        aheadBehind?.behind ?? '-'
+      }`
+    )
+  }
+  return signatures
+}
+
 function activityMapDisplayChanged(
   previous: ReadonlyMap<string, IRepositoryActivity>,
   next: ReadonlyMap<string, IRepositoryActivity>
@@ -209,6 +231,8 @@ export class RepositoriesList extends React.Component<
   private groupCounts = new Map<string, number>()
   private suppressClickUntil = 0
   private lastRenderedActivity: IActivityState
+  /** The app store mutates its lookup in place, so compare copied values. */
+  private localStateSnapshot: ReadonlyMap<number, string> = new Map()
 
   /**
    * A memoized function for grouping repositories for display
@@ -287,12 +311,18 @@ export class RepositoriesList extends React.Component<
 
   public componentDidMount() {
     this.updateActivityPaths()
-    this.refreshActivity()
-    window.addEventListener('focus', this.refreshActivity)
+    this.localStateSnapshot = localStateSignatures(
+      this.props.localRepositoryStateLookup
+    )
+    this.forceRefreshActivity()
+    window.addEventListener('focus', this.forceRefreshActivity)
     window.addEventListener(RepositoryGroupsChangedEvent, this.onGroupsChanged)
     document.addEventListener('dragover', this.onDocumentDragOver, true)
     document.addEventListener('visibilitychange', this.refreshVisibleActivity)
-    this.activityTimer = window.setInterval(this.refreshVisibleActivity, 15000)
+    this.activityTimer = window.setInterval(
+      this.refreshVisibleActivity,
+      ActivityRefreshInterval
+    )
   }
 
   public componentDidUpdate(prevProps: IRepositoriesListProps) {
@@ -304,6 +334,7 @@ export class RepositoriesList extends React.Component<
         this.refreshActivity()
       }
     }
+    this.invalidateChangedLocalState()
   }
 
   public componentWillUnmount() {
@@ -311,7 +342,7 @@ export class RepositoriesList extends React.Component<
     this.clearGroupDragImage()
     this.activityMonitor.stop()
     window.clearInterval(this.activityTimer)
-    window.removeEventListener('focus', this.refreshActivity)
+    window.removeEventListener('focus', this.forceRefreshActivity)
     window.removeEventListener(
       RepositoryGroupsChangedEvent,
       this.onGroupsChanged
@@ -333,8 +364,40 @@ export class RepositoriesList extends React.Component<
     )
   }
 
+  /**
+   * Commits, pushes, and pulls update the app store's indicators. Recheck
+   * those repositories so cached activity does not override newer values.
+   */
+  private invalidateChangedLocalState() {
+    const previous = this.localStateSnapshot
+    const next = localStateSignatures(this.props.localRepositoryStateLookup)
+    this.localStateSnapshot = next
+    const changed = new Set<number>()
+    for (const id of new Set([...previous.keys(), ...next.keys()])) {
+      if (previous.get(id) !== next.get(id)) {
+        changed.add(id)
+      }
+    }
+    if (changed.size === 0) {
+      return
+    }
+    const paths = this.props.repositories
+      .filter((r): r is Repository => r instanceof Repository)
+      .filter(r => changed.has(r.id))
+      .map(r => r.path)
+    if (paths.length > 0) {
+      this.activityMonitor.invalidate(paths)
+      this.refreshActivity()
+    }
+  }
+
   private refreshActivity = () => {
-    void this.activityMonitor.refresh({ maxAge: ActivityFreshnessWindow })
+    void this.activityMonitor.refresh({ maxAge: ActivityTickFreshnessWindow })
+  }
+
+  /** Explicit moments (opening the picker, focusing the window) recheck all. */
+  private forceRefreshActivity = () => {
+    void this.activityMonitor.refresh({ maxAge: 0 })
   }
 
   private refreshVisibleActivity = () => {

@@ -19,6 +19,11 @@ export class RepositoryActivityMonitor {
   private generation = 0
   private stopped = false
   private running: Promise<void> | null = null
+  private followUp: Promise<void> | null = null
+  private pendingMaxAge: number | null = null
+  /** Invalidation sequence per key; cleared only by a later-started sample. */
+  private invalidations = new Map<string, number>()
+  private invalidationCount = 0
   private cache: ReadonlyMap<string, IRepositoryActivity>
 
   public constructor(
@@ -48,19 +53,48 @@ export class RepositoryActivityMonitor {
     this.paths = unique
     this.generation++
     this.cache = new Map([...this.cache].filter(([key]) => wanted.has(key)))
+    this.invalidations = new Map(
+      [...this.invalidations].filter(([key]) => wanted.has(key))
+    )
     return true
+  }
+
+  /**
+   * Treat these paths as stale until a sample started after this call
+   * completes. Does not start a pass; call `refresh` afterwards.
+   */
+  public invalidate(paths: ReadonlyArray<string>): void {
+    const known = new Set(this.paths.map(activityKey))
+    for (const path of paths) {
+      const key = activityKey(path)
+      if (known.has(key)) {
+        this.invalidations.set(key, ++this.invalidationCount)
+      }
+    }
   }
 
   public refresh(options: IActivityRefreshOptions = {}): Promise<void> {
     if (this.stopped) {
       return Promise.resolve()
     }
-    if (this.running !== null) {
-      return this.running
-    }
     const maxAge = options.maxAge ?? 0
     if (!Number.isFinite(maxAge) || maxAge < 0) {
       throw new Error('Activity freshness window must be a non-negative number')
+    }
+    if (this.running !== null) {
+      // The running pass may have sampled some paths before this request, so
+      // merge requests into one follow-up pass with the strictest window.
+      this.pendingMaxAge = Math.min(this.pendingMaxAge ?? maxAge, maxAge)
+      if (this.followUp === null) {
+        const next = () => {
+          const pending = this.pendingMaxAge ?? 0
+          this.pendingMaxAge = null
+          this.followUp = null
+          return this.refresh({ maxAge: pending })
+        }
+        this.followUp = this.running.then(next, next)
+      }
+      return this.followUp
     }
     // Queue the pass so the running promise is assigned before any callback.
     this.running = Promise.resolve()
@@ -81,6 +115,8 @@ export class RepositoryActivityMonitor {
       const generation = this.generation
       const paths = this.paths
       const results = new Map(this.cache)
+      // The invalidation sequence observed when each path's sample started.
+      const sampledAfter = new Map<string, number>()
       let next = 0
       let completed = 0
       this.changed({
@@ -98,10 +134,11 @@ export class RepositoryActivityMonitor {
           const path = paths[next++]
           const key = activityKey(path)
           const previous = this.cache.get(key)
-          if (this.isFresh(previous, maxAge)) {
+          if (this.isFresh(key, previous, maxAge)) {
             completed++
             continue
           }
+          sampledAfter.set(key, this.invalidationCount)
           let activity: IRepositoryActivity
           try {
             const sample = await this.sample(path)
@@ -148,6 +185,11 @@ export class RepositoryActivityMonitor {
         continue
       }
       this.cache = results
+      for (const [key, sequence] of sampledAfter) {
+        if ((this.invalidations.get(key) ?? Infinity) <= sequence) {
+          this.invalidations.delete(key)
+        }
+      }
       this.changed({
         repositories: this.cache,
         checking: false,
@@ -175,11 +217,13 @@ export class RepositoryActivityMonitor {
   }
 
   private isFresh(
+    key: string,
     activity: IRepositoryActivity | undefined,
     maxAge: number
   ): boolean {
     if (
       maxAge === 0 ||
+      this.invalidations.has(key) ||
       activity === undefined ||
       activity.error ||
       activity.checkedAt <= 0

@@ -57,7 +57,6 @@ export type MenuEvent =
 const TestMenuEvents = [
   'boomtown',
   'test-app-error',
-  'test-arm64-banner',
   'test-confirm-committing-conflicted-files',
   'test-cherry-pick-conflicts-banner',
   'test-copilot-snapshot-card',
@@ -76,20 +75,15 @@ const TestMenuEvents = [
   'test-prune-branches',
   'test-push-rejected',
   'test-re-authorization-required',
-  'test-release-notes-popup',
   'test-reorder-banner',
-  'test-showcase-update-banner',
   'test-thank-you-banner',
   'test-thank-you-popup',
   'test-unable-to-locate-git',
   'test-unable-to-open-shell',
   'test-undone-banner',
   'test-untrusted-server',
-  'test-update-banner',
-  'test-prioritized-update-banner',
   'test-update-existing-git-lfs-filters',
   'test-upstream-already-exists',
-  'test-about-dialog',
   'test-cli-action',
 ] as const
 
