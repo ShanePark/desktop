@@ -84,6 +84,7 @@ async function main() {
       Assert.equal(parse(statuses.map((s, i) => `${s} f${i}\0`).join('')).length, statuses.length)
     })
     test('ignored entries are excluded', () => Assert.equal(parse('!! cache\0?? file\0').length, 1))
+    test('files added and then deleted from the working tree are excluded', () => Assert.equal(parse('AD gone\0A  kept\0').length, 1))
     test('malformed or truncated status fails instead of claiming clean', () => {
       for (const text of [' M x', 'R  x\0', 'XY x\0', ' M\0']) Assert.throws(() => parse(text))
     })
@@ -98,6 +99,12 @@ async function main() {
       await Fs.mkdir(Path.join(path, 'ignored'))
       await Fs.writeFile(Path.join(path, 'ignored/cache'), 'do not count')
       Assert.equal((await sample(path, status)).changedFilesCount, 3)
+    }))
+    test('a real file added to the index and then deleted is clean like Changes', () => withRepo(async path => {
+      await Fs.writeFile(Path.join(path, 'checklist.md'), 'temporary')
+      git(path, ['add', 'checklist.md'])
+      await Fs.rm(Path.join(path, 'checklist.md'))
+      Assert.equal((await sample(path, status)).changedFilesCount, 0)
     }))
     test('staged-only changes are not missed', () => withRepo(async path => {
       await Fs.appendFile(Path.join(path, 'file.txt'), 'staged')

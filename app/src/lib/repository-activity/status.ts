@@ -64,7 +64,9 @@ export function parseActivityStatus(
     if (renamed && !oldPath) {
       throw new Error('Incomplete rename status record')
     }
-    if (status !== '!!' && status !== '  ') {
+    // Like Changes, skip files added to the index and then deleted from the
+    // working tree: they leave nothing to commit.
+    if (status !== '!!' && status !== '  ' && status !== 'AD') {
       entries.push({ status, path, oldPath })
     }
   }

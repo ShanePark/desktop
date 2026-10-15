@@ -262,7 +262,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 71 repository activity checks, 39 UI wiring
+The direct runners currently cover 73 repository activity checks, 39 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.
