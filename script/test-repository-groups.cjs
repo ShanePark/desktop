@@ -129,8 +129,8 @@ async function main() {
     )
     assert.deepEqual(finished[0].items, [])
     // Repositories leaving Working stay easy to find in Recent.
-    assert.deepEqual(finished[1].items.map(r => r.id), ['recent:0', 'recent:1', 'recent:2'])
-    assert.deepEqual(finished[1].items.map(r => r.recentGroupName), ['Personal', 'Personal', 'Personal'])
+    assert.deepEqual(finished[1].items.map(r => r.id), ['recent:0', 'recent:1', 'recent:2', 'recent:3'])
+    assert.deepEqual(finished[1].items.map(r => r.recentGroupName), ['Personal', 'Personal', 'Personal', 'Ungrouped'])
     assert.deepEqual(finished[2].items.map(r => r.id), ['0', '1', '2'])
     assert.deepEqual(finished[3].items.map(r => r.id), ['3'])
   })

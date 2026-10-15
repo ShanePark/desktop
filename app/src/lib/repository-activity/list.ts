@@ -42,8 +42,12 @@ export function savedItemId(id: string): string {
     : id
 }
 
-/** The maximum number of repositories in the derived Recent section. */
-export const RecentLimit = 3
+/**
+ * Recent tops up Working to this many rows, but never shows fewer than
+ * `RecentMinimum` rows.
+ */
+export const RecentWorkingTotal = 5
+export const RecentMinimum = 3
 
 export interface IActivityListGroup<T, G> {
   readonly identifier: G
@@ -245,10 +249,11 @@ export function projectActivityGroups<T extends IActivityRow, G>(
   // newest first. Unlike Working, its rows also remain in their saved group,
   // so they get distinct item ids while still referring to the same
   // repository.
+  const recentLimit = Math.max(RecentWorkingTotal - working.size, RecentMinimum)
   const recent = annotated
     .filter(row => !working.has(row.repository.id) && latest([row]) > 0)
     .sort((a, b) => latest([b]) - latest([a]) || compareNames(a, b))
-    .slice(0, RecentLimit)
+    .slice(0, recentLimit)
     .map(row => ({
       ...row,
       id: `${RecentItemIdPrefix}${row.id}`,

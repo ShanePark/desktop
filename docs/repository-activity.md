@@ -12,11 +12,13 @@ Open **Current Repository**. The list shows these sections in order:
 
 - **Working**: repositories with uncommitted changes or local commits not
   pushed from the current branch, regardless of their assigned group.
-- **Recent**: up to three other repositories with the newest known activity
+- **Recent**: other repositories with the newest known activity
   (the later of the estimated last local change and the HEAD commit time),
-  newest first regardless of **Sort by**. A repository that was just
-  committed and pushed leaves Working and stays easy to find here.
-  Repositories without a known activity time are not listed.
+  newest first regardless of **Sort by**. It lists enough repositories to
+  bring Working and Recent to five together, and up to three when Working
+  already has three or more. A repository that was just committed and pushed
+  leaves Working and stays easy to find here. Repositories without a known
+  activity time are not listed.
 - **Your groups**: create groups using **Add → New group…**. A `shane` group is provided initially.
 - **Ungrouped**: repositories that have not been assigned to a group.
 
@@ -260,7 +262,7 @@ python3 script/test-local-desktop.py
 yarn compile:dev
 ```
 
-The direct runners currently cover 70 repository activity checks, 39 UI wiring
+The direct runners currently cover 71 repository activity checks, 39 UI wiring
 checks, and 10 repository group checks. The UI runner uses stubbed React, DOM,
 and Git services; it is not a real Electron GUI test. The activity unit test
 invokes all three runners through the repository's Node.js test runner.

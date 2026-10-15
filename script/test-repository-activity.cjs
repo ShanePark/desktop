@@ -388,6 +388,17 @@ async function main() {
         Assert.deepEqual(section(result, Org.RecentGroup).map(r => r.id), ['recent:2', 'recent:7', 'recent:6'], sort)
       }
     })
+    test('Recent fills Working and Recent to five but keeps at least three', () => {
+      const { rows, data, organization } = recentFixture()
+      const recentIds = () => section(project([group('all', rows)], data, prefs(), 'activity', organization), Org.RecentGroup).map(r => r.id)
+      data.set(key(rows[8].repository.path), { ...snap(0), unpushedCount: 0, lastCommitAt: 5000 })
+      data.set(key(rows[7].repository.path), { ...snap(0), unpushedCount: 0, lastCommitAt: 4000 })
+      Assert.deepEqual(recentIds(), ['recent:9', 'recent:8', 'recent:2', 'recent:7', 'recent:6'])
+      data.set(key(rows[8].repository.path), { ...snap(2, 5000), unpushedCount: 0 })
+      Assert.deepEqual(recentIds(), ['recent:8', 'recent:2', 'recent:7', 'recent:6'])
+      for (const i of [7, 6, 5]) data.set(key(rows[i].repository.path), { ...snap(1, 900), unpushedCount: 0 })
+      Assert.deepEqual(recentIds(), ['recent:2', 'recent:5', 'recent:4'])
+    })
     test('Recent rows duplicate saved rows with distinct ids and saved group tags', () => {
       const { rows, data, organization } = recentFixture()
       const result = project([group('all', rows)], data, prefs('name'), 'activity', organization)
