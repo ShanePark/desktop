@@ -324,6 +324,7 @@ import { IStashEntry, StashedChangesLoadStates } from '../../models/stash-entry'
 import { arrayEquals } from '../equality'
 import { MenuLabelsEvent } from '../../models/menu-labels'
 import { findRemoteBranchName } from './helpers/find-branch-name'
+import { loadHistoryUntilCommitIsListed } from './helpers/load-history-until-commit'
 import { updateRemoteUrl } from './updates/update-remote-url'
 import {
   TutorialStep,
@@ -1975,6 +1976,44 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }))
       this.emitUpdate()
     }
+  }
+
+  /**
+   * Show the History tab's commit list in History mode, load it until the
+   * given commit is listed, and select that commit.
+   *
+   * @returns Whether the commit was found and selected.
+   *
+   * This shouldn't be called directly. See `Dispatcher`.
+   */
+  public async _selectCommitInHistory(
+    repository: Repository,
+    sha: string
+  ): Promise<boolean> {
+    await this._executeCompare(repository, { kind: HistoryTabMode.History })
+    this._updateCompareForm(repository, {
+      filterText: '',
+      showBranchList: false,
+    })
+
+    const isListed = await loadHistoryUntilCommitIsListed(
+      sha,
+      () => {
+        const { compareState } = this.repositoryStateCache.get(repository)
+        return compareState.formState.kind === HistoryTabMode.History
+          ? compareState.commitSHAs
+          : []
+      },
+      () => this._loadNextCommitBatch(repository)
+    )
+
+    if (!isListed) {
+      return false
+    }
+
+    this._changeCommitSelection(repository, [sha], true)
+    this._loadChangedFilesForCurrentSelection(repository)
+    return true
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */

@@ -9,6 +9,7 @@ import { NoChanges } from './changes/no-changes'
 import { MultipleSelection } from './changes/multiple-selection'
 import { FilesChangedBadge } from './changes/files-changed-badge'
 import { SelectedCommits, CompareSidebar } from './history'
+import { CommitListRowHeight } from './history/commit-list'
 import { Resizable } from './resizable'
 import { TabBar } from './tab-bar'
 import {
@@ -165,11 +166,17 @@ export class RepositoryView extends React.Component<
   // the Compare list is rendered.
   private forceCompareListScrollTop: boolean = false
 
+  // A commit to scroll to the top of the Compare list once the list includes
+  // it. See `onViewCommitInHistory`.
+  private commitToRevealInCompareList: string | null = null
+
   private readonly changesSidebarRef = React.createRef<ChangesSidebar>()
   private readonly compareSidebarRef = React.createRef<CompareSidebar>()
 
   private focusHistoryNeeded: boolean = false
   private focusChangesNeeded: boolean = false
+
+  private unmounted: boolean = false
 
   public constructor(props: IRepositoryViewProps) {
     super(props)
@@ -353,6 +360,19 @@ export class RepositoryView extends React.Component<
     this.previousSection = RepositorySectionTab.History
     this.forceCompareListScrollTop = false
 
+    const revealRow =
+      this.commitToRevealInCompareList === null
+        ? -1
+        : compareState.commitSHAs.indexOf(this.commitToRevealInCompareList)
+    // Coming from Changes the saved position would otherwise be restored, and
+    // an already mounted list does not scroll to a new selection by itself.
+    // An explicit position reveals the commit in both cases.
+    const compareListScrollTop =
+      revealRow >= 0 ? revealRow * CommitListRowHeight : scrollTop
+    if (revealRow >= 0) {
+      this.commitToRevealInCompareList = null
+    }
+
     return (
       <CompareSidebar
         ref={this.compareSidebarRef}
@@ -372,7 +392,7 @@ export class RepositoryView extends React.Component<
         onViewCommitOnGitHub={this.props.onViewCommitOnGitHub}
         onCompareListScrolled={this.onCompareListScrolled}
         onCherryPick={this.props.onCherryPick}
-        compareListScrollTop={scrollTop}
+        compareListScrollTop={compareListScrollTop}
         tagsToPush={tagsToPush}
         aheadBehindStore={aheadBehindStore}
         isMultiCommitOperationInProgress={mcos !== null}
@@ -501,6 +521,7 @@ export class RepositoryView extends React.Component<
             ? undefined
             : this.onReturnToWorkingDirectory
         }
+        onViewCommitInHistory={this.onViewCommitInHistory}
         repository={this.props.repository}
         dispatcher={this.props.dispatcher}
         selectedCommits={selectedCommits}
@@ -565,6 +586,30 @@ export class RepositoryView extends React.Component<
       this.props.repository,
       RepositorySectionTab.Changes
     )
+  }
+
+  private onViewCommitInHistory = async (sha: string) => {
+    const { repository, dispatcher } = this.props
+    this.commitToRevealInCompareList = null
+
+    // Load and select the commit before switching tabs. Switching to History
+    // keeps the current selection only when it is already in the list.
+    const isSelected = await dispatcher.selectCommitInHistory(repository, sha)
+    if (this.unmounted) {
+      return
+    }
+
+    if (isSelected) {
+      this.commitToRevealInCompareList = sha
+      this.forceUpdate()
+    }
+
+    if (this.props.state.selectedSection !== RepositorySectionTab.History) {
+      await dispatcher.changeRepositorySection(
+        repository,
+        RepositorySectionTab.History
+      )
+    }
   }
 
   private onTutorialCompletionAnnounced = () => {
@@ -660,6 +705,8 @@ export class RepositoryView extends React.Component<
             this.props.askForConfirmationOnDiscardChanges
           }
           onDiffOptionsOpened={this.onDiffOptionsOpened}
+          onViewCommitInHistory={this.onViewCommitInHistory}
+          onViewCommitOnGitHub={this.props.onViewCommitOnGitHub}
         />
       )
     }
@@ -716,6 +763,7 @@ export class RepositoryView extends React.Component<
   }
 
   public componentWillUnmount() {
+    this.unmounted = true
     window.removeEventListener('keydown', this.onGlobalKeyDown)
   }
 

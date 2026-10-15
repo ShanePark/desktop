@@ -30,7 +30,8 @@ import { Avatar } from '../lib/avatar'
 import { Octicon } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
 
-const RowHeight = 50
+/** The height of a commit row, in pixels. */
+export const CommitListRowHeight = 50
 
 interface ICommitListProps {
   /** The GitHub repository associated with this commit (if found) */
@@ -88,6 +89,18 @@ interface ICommitListProps {
 
   /** Callback to fire to open a given commit on GitHub */
   readonly onViewCommitOnGitHub?: (sha: string) => void
+
+  /**
+   * Show a short context menu with only navigation and copy actions instead
+   * of the commit operations offered by the History tab's commit list.
+   */
+  readonly readOnlyContextMenu?: boolean
+
+  /**
+   * Callback to fire to show a given commit in the History tab's commit list.
+   * Only offered by the read-only context menu.
+   */
+  readonly onViewCommitInHistory?: (sha: string) => void
 
   /** Callback to fire to cancel a keyboard reordering operation */
   readonly onCancelKeyboardReorder?: () => void
@@ -439,8 +452,8 @@ export class CommitList extends React.Component<
   }
 
   private onScroll = (scrollTop: number, clientHeight: number) => {
-    const numberOfRows = Math.ceil(clientHeight / RowHeight)
-    const top = Math.floor(scrollTop / RowHeight)
+    const numberOfRows = Math.ceil(clientHeight / CommitListRowHeight)
+    const top = Math.floor(scrollTop / CommitListRowHeight)
     const bottom = top + numberOfRows
     this.props.onScroll?.(top, bottom)
 
@@ -592,7 +605,7 @@ export class CommitList extends React.Component<
           role={this.props.isInformationalView === true ? 'list' : 'listbox'}
           ref={this.listRef}
           rowCount={commitSHAs.length}
-          rowHeight={RowHeight}
+          rowHeight={CommitListRowHeight}
           selectedRows={selectedRows}
           rowRenderer={this.renderCommit}
           onDropDataInsertion={this.onDropDataInsertion}
@@ -715,7 +728,9 @@ export class CommitList extends React.Component<
     }
 
     let items: IMenuItem[] = []
-    if (this.props.selectedSHAs.length > 1) {
+    if (this.props.readOnlyContextMenu === true) {
+      items = this.getReadOnlyContextMenu(commit)
+    } else if (this.props.selectedSHAs.length > 1) {
       items = this.getContextMenuMultipleCommits(commit)
     } else {
       items = this.getContextMenuForSingleCommit(row, commit)
@@ -741,16 +756,6 @@ export class CommitList extends React.Component<
     const canBeResetTo =
       this.props.canResetToCommits === true && isResettableCommit
     const canBeCheckedOut = row > 0 //Cannot checkout the current commit
-
-    let viewOnGitHubLabel = 'View on GitHub'
-    const gitHubRepository = this.props.gitHubRepository
-
-    if (
-      gitHubRepository &&
-      gitHubRepository.endpoint !== getDotComAPIEndpoint()
-    ) {
-      viewOnGitHubLabel = 'View on GitHub Enterprise'
-    }
 
     const items: IMenuItem[] = []
 
@@ -839,8 +844,6 @@ export class CommitList extends React.Component<
         deleteTagsMenuItem
       )
     }
-    const darwinTagsLabel = commit.tags.length > 1 ? 'Copy Tags' : 'Copy Tag'
-    const windowTagsLabel = commit.tags.length > 1 ? 'Copy tags' : 'Copy tag'
     items.push(
       {
         label: __DARWIN__ ? 'Cherry-pick Commit…' : 'Cherry-pick commit…',
@@ -848,23 +851,76 @@ export class CommitList extends React.Component<
         enabled: this.canCherryPick(),
       },
       { type: 'separator' },
-      {
-        label: 'Copy SHA',
-        action: () => clipboard.writeText(commit.sha),
-      },
-      {
-        label: __DARWIN__ ? darwinTagsLabel : windowTagsLabel,
-        action: () => clipboard.writeText(commit.tags.join(' ')),
-        enabled: commit.tags.length > 0,
-      },
-      {
-        label: viewOnGitHubLabel,
-        action: () => this.props.onViewCommitOnGitHub?.(commit.sha),
-        enabled: !isLocal && !!gitHubRepository,
-      }
+      this.getCopySHAMenuItem(commit),
+      this.getCopyTagsMenuItem(commit),
+      this.getViewOnGitHubMenuItem(commit)
     )
 
     return items
+  }
+
+  /**
+   * The context menu for lists that only display commits, such as the file
+   * history panel. Unavailable actions are left out rather than disabled.
+   */
+  private getReadOnlyContextMenu(commit: Commit): IMenuItem[] {
+    const { onViewCommitInHistory, onViewCommitOnGitHub } = this.props
+    const items: IMenuItem[] = []
+
+    if (onViewCommitInHistory !== undefined) {
+      items.push(
+        {
+          label: __DARWIN__ ? 'View in History' : 'View in history',
+          action: () => onViewCommitInHistory(commit.sha),
+        },
+        { type: 'separator' }
+      )
+    }
+
+    items.push(this.getCopySHAMenuItem(commit))
+
+    if (commit.tags.length > 0) {
+      items.push(this.getCopyTagsMenuItem(commit))
+    }
+
+    const viewOnGitHubItem = this.getViewOnGitHubMenuItem(commit)
+    if (onViewCommitOnGitHub !== undefined && viewOnGitHubItem.enabled) {
+      items.push(viewOnGitHubItem)
+    }
+
+    return items
+  }
+
+  private getCopySHAMenuItem(commit: Commit): IMenuItem {
+    return {
+      label: 'Copy SHA',
+      action: () => clipboard.writeText(commit.sha),
+    }
+  }
+
+  private getCopyTagsMenuItem(commit: Commit): IMenuItem {
+    const darwinTagsLabel = commit.tags.length > 1 ? 'Copy Tags' : 'Copy Tag'
+    const windowTagsLabel = commit.tags.length > 1 ? 'Copy tags' : 'Copy tag'
+
+    return {
+      label: __DARWIN__ ? darwinTagsLabel : windowTagsLabel,
+      action: () => clipboard.writeText(commit.tags.join(' ')),
+      enabled: commit.tags.length > 0,
+    }
+  }
+
+  private getViewOnGitHubMenuItem(commit: Commit): IMenuItem {
+    const { gitHubRepository } = this.props
+    const label =
+      gitHubRepository && gitHubRepository.endpoint !== getDotComAPIEndpoint()
+        ? 'View on GitHub Enterprise'
+        : 'View on GitHub'
+
+    return {
+      label,
+      action: () => this.props.onViewCommitOnGitHub?.(commit.sha),
+      enabled: !this.isLocalCommit(commit.sha) && !!gitHubRepository,
+    }
   }
 
   private canCherryPick(): boolean {

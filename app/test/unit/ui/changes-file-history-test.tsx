@@ -54,6 +54,8 @@ interface IFileHistoryPanelTestProps {
   readonly isLoading: boolean
   readonly onEntrySelected: (entry: IFileHistoryEntry) => void
   readonly onReturnToWorkingDirectory?: () => void
+  readonly onViewCommitInHistory?: (sha: string) => void
+  readonly onViewCommitOnGitHub?: (sha: string) => void
   readonly children: React.ReactNode
 }
 
@@ -62,6 +64,8 @@ function TestFileHistoryPanel({
   isLoading,
   onEntrySelected,
   onReturnToWorkingDirectory,
+  onViewCommitInHistory,
+  onViewCommitOnGitHub,
   children,
 }: IFileHistoryPanelTestProps) {
   return (
@@ -73,13 +77,27 @@ function TestFileHistoryPanel({
         </button>
       )}
       {entries.map(entry => (
-        <button
-          key={entry.commit.sha}
-          type="button"
-          onClick={() => onEntrySelected(entry)}
-        >
-          {entry.commit.summary}
-        </button>
+        <React.Fragment key={entry.commit.sha}>
+          <button type="button" onClick={() => onEntrySelected(entry)}>
+            {entry.commit.summary}
+          </button>
+          {onViewCommitInHistory !== undefined && (
+            <button
+              type="button"
+              onClick={() => onViewCommitInHistory(entry.commit.sha)}
+            >
+              View {entry.commit.summary} in history
+            </button>
+          )}
+          {onViewCommitOnGitHub !== undefined && (
+            <button
+              type="button"
+              onClick={() => onViewCommitOnGitHub(entry.commit.sha)}
+            >
+              View {entry.commit.summary} on GitHub
+            </button>
+          )}
+        </React.Fragment>
       ))}
       {children}
     </div>
@@ -192,8 +210,11 @@ function createChangesProps(file = currentFile): IChangesProps {
   }
 }
 
-function renderChanges(file = currentFile) {
-  const props = createChangesProps(file)
+function renderChanges(
+  file = currentFile,
+  overrides: Partial<IChangesProps> = {}
+) {
+  const props = { ...createChangesProps(file), ...overrides }
   const view = render(<Changes {...props} />)
 
   return { view, props }
@@ -230,6 +251,36 @@ describe('Changes file history', () => {
       assert.ok(screen.getByRole('button', { name: entry.commit.summary }))
     )
     assert.equal(screen.queryByText('Loading file history…'), null)
+  })
+
+  it('forwards history commit navigation to the repository view', async () => {
+    const viewedInHistory = new Array<string>()
+    const viewedOnGitHub = new Array<string>()
+    renderChanges(currentFile, {
+      onViewCommitInHistory: sha => viewedInHistory.push(sha),
+      onViewCommitOnGitHub: sha => viewedOnGitHub.push(sha),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'File history' }))
+    await waitFor(() => assert.equal(historyRequests.length, 1))
+
+    const entry = createEntry(
+      '1111111111111111111111111111111111111111',
+      'First change'
+    )
+    historyRequests[0].resolve([entry])
+
+    fireEvent.click(
+      await waitFor(() =>
+        screen.getByRole('button', { name: 'View First change in history' })
+      )
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View First change on GitHub' })
+    )
+
+    assert.deepEqual(viewedInHistory, [entry.commit.sha])
+    assert.deepEqual(viewedOnGitHub, [entry.commit.sha])
   })
 
   it('clears entries immediately when the selected file changes', async () => {

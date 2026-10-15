@@ -246,6 +246,19 @@ export class Dispatcher {
     return this.appStore._loadNextCommitBatch(repository)
   }
 
+  /**
+   * Show the History tab's commit list in History mode, load it until the
+   * given commit is listed, and select that commit.
+   *
+   * @returns Whether the commit was found and selected.
+   */
+  public selectCommitInHistory(
+    repository: Repository,
+    sha: string
+  ): Promise<boolean> {
+    return this.appStore._selectCommitInHistory(repository, sha)
+  }
+
   /** Load the changed files for the current history selection. */
   public loadChangedFilesForCurrentSelection(
     repository: Repository

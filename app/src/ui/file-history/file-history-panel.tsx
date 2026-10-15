@@ -40,6 +40,12 @@ export interface IFileHistoryPanelProps {
   /** Whether the working-directory row should be shown as selected. */
   readonly isWorkingDirectorySelected?: boolean
 
+  /** Called when the user wants to see a commit in the History tab. */
+  readonly onViewCommitInHistory?: (sha: string) => void
+
+  /** Called when the user wants to open a commit on GitHub. */
+  readonly onViewCommitOnGitHub?: (sha: string) => void
+
   /** The diff view rendered above the history list. */
   readonly children: React.ReactNode
 
@@ -176,6 +182,9 @@ export class FileHistoryPanel extends React.Component<
         preferAbsoluteDates={this.props.preferAbsoluteDates ?? false}
         selectionMode="single"
         onCommitsSelected={this.onCommitsSelected}
+        readOnlyContextMenu={true}
+        onViewCommitInHistory={this.props.onViewCommitInHistory}
+        onViewCommitOnGitHub={this.props.onViewCommitOnGitHub}
         emptyListMessage={
           this.props.isLoading
             ? 'Loading file history…'

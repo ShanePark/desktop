@@ -87,6 +87,12 @@ export interface IChangesProps {
 
   /** Called when the user opens the diff options popover */
   readonly onDiffOptionsOpened: () => void
+
+  /** Called when the user wants to see a file history commit in History. */
+  readonly onViewCommitInHistory?: (sha: string) => void
+
+  /** Called when the user wants to open a file history commit on GitHub. */
+  readonly onViewCommitOnGitHub?: (sha: string) => void
 }
 
 interface IChangesState {
@@ -502,6 +508,8 @@ export class Changes extends React.Component<IChangesProps, IChangesState> {
           onEntrySelected={this.onEntrySelected}
           onReturnToWorkingDirectory={this.onReturnToWorkingDirectory}
           isWorkingDirectorySelected={selectedEntry === null}
+          onViewCommitInHistory={this.props.onViewCommitInHistory}
+          onViewCommitOnGitHub={this.props.onViewCommitOnGitHub}
           emoji={this.props.emoji}
           accounts={this.props.accounts}
           preferAbsoluteDates={this.props.preferAbsoluteDates}

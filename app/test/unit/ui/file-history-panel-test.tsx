@@ -23,6 +23,9 @@ interface ICommitListTestProps {
     isContiguous: boolean
   ) => void
   readonly emptyListMessage?: React.ReactNode
+  readonly readOnlyContextMenu?: boolean
+  readonly onViewCommitInHistory?: (sha: string) => void
+  readonly onViewCommitOnGitHub?: (sha: string) => void
 }
 
 function TestCommitList({
@@ -30,22 +33,46 @@ function TestCommitList({
   commitLookup,
   onCommitsSelected,
   emptyListMessage,
+  readOnlyContextMenu,
+  onViewCommitInHistory,
+  onViewCommitOnGitHub,
 }: ICommitListTestProps) {
   const firstCommit = commitSHAs[0]
     ? commitLookup.get(commitSHAs[0])
     : undefined
 
   return (
-    <div data-testid="test-commit-list">
+    <div
+      data-testid="test-commit-list"
+      data-read-only-context-menu={readOnlyContextMenu === true}
+    >
       {firstCommit === undefined ? (
         <div>{emptyListMessage}</div>
       ) : (
-        <button
-          type="button"
-          onClick={() => onCommitsSelected?.([firstCommit], true)}
-        >
-          Select {firstCommit.summary}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => onCommitsSelected?.([firstCommit], true)}
+          >
+            Select {firstCommit.summary}
+          </button>
+          {onViewCommitInHistory !== undefined && (
+            <button
+              type="button"
+              onClick={() => onViewCommitInHistory(firstCommit.sha)}
+            >
+              View {firstCommit.summary} in history
+            </button>
+          )}
+          {onViewCommitOnGitHub !== undefined && (
+            <button
+              type="button"
+              onClick={() => onViewCommitOnGitHub(firstCommit.sha)}
+            >
+              View {firstCommit.summary} on GitHub
+            </button>
+          )}
+        </>
       )}
     </div>
   )
@@ -137,6 +164,32 @@ describe('FileHistoryPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select First change' }))
 
     assert.deepEqual(selectedEntries, [entries[0]])
+  })
+
+  it('uses the read-only commit menu and forwards its actions', () => {
+    const viewedInHistory = new Array<string>()
+    const viewedOnGitHub = new Array<string>()
+    const { entries } = renderPanel({
+      onViewCommitInHistory: sha => viewedInHistory.push(sha),
+      onViewCommitOnGitHub: sha => viewedOnGitHub.push(sha),
+    })
+
+    assert.equal(
+      screen
+        .getByTestId('test-commit-list')
+        .getAttribute('data-read-only-context-menu'),
+      'true'
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View First change in history' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View First change on GitHub' })
+    )
+
+    assert.deepEqual(viewedInHistory, [entries[0].commit.sha])
+    assert.deepEqual(viewedOnGitHub, [entries[0].commit.sha])
   })
 
   it('returns to the working directory when the dirty row is clicked', () => {

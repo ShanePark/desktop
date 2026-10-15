@@ -21,6 +21,10 @@ const HistoryCommittedLine = 'Committed history line.'
 const CleanHistoryLine = 'Clean history line.'
 const DirtyLine = 'Dirty working-tree line.'
 
+// Enough unrelated commits to push the first file history commit past the
+// History tab's initial batch of 100 commits.
+const UnrelatedCommitCount = 120
+
 interface IMainProcessE2EState {
   fileHistoryContextMenuLabels?: ReadonlyArray<string>
 }
@@ -52,6 +56,10 @@ function createFileHistoryRepository() {
   fs.writeFileSync(filePath, `${smokeRepoFileContents}\n${HistoryFirstLine}\n`)
   runGit(['add', '--', HistoryFileName])
   runGit(['commit', '-m', HistoryFirstCommit])
+
+  for (let i = 1; i <= UnrelatedCommitCount; i++) {
+    runGit(['commit', '--allow-empty', '-m', `Unrelated commit ${i}`])
+  }
 
   fs.appendFileSync(filePath, `${HistorySecondLine}\n`)
   runGit(['add', '--', HistoryFileName])
@@ -164,8 +172,22 @@ function commitRow(page: Page, summary: string) {
     .first()
 }
 
-async function interceptFileHistoryContextMenu(app: ElectronApplication) {
-  await app.evaluate(({ ipcMain }) => {
+function historyCommitRow(page: Page, summary: string) {
+  return page
+    .locator('#compare-view #commit-list .list-item')
+    .filter({ hasText: summary })
+    .first()
+}
+
+/**
+ * Replaces the native context menu with one that records its labels and
+ * chooses the first item matching `labelPattern`.
+ */
+async function interceptFileHistoryContextMenu(
+  app: ElectronApplication,
+  labelPattern = 'file history'
+) {
+  await app.evaluate(({ ipcMain }, pattern) => {
     ipcMain.removeHandler('show-contextual-menu')
     ipcMain.handle('show-contextual-menu', (_event, items) => {
       const labels = (items as ReadonlyArray<{ label?: string }>).map(
@@ -174,9 +196,18 @@ async function interceptFileHistoryContextMenu(app: ElectronApplication) {
       const state = globalThis as typeof globalThis & IMainProcessE2EState
       state.fileHistoryContextMenuLabels = labels
 
-      const index = labels.findIndex(label => /file history/i.test(label))
+      const index = labels.findIndex(label =>
+        new RegExp(pattern, 'i').test(label)
+      )
       return index >= 0 ? [index] : null
     })
+  }, labelPattern)
+}
+
+async function clearContextMenuLabels(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & IMainProcessE2EState
+    state.fileHistoryContextMenuLabels = undefined
   })
 }
 
@@ -380,5 +411,72 @@ fileHistoryTest(
     await expect(cleanFileHistoryPanel).toContainText(CleanHistoryFileName)
 
     await page.screenshot({ path: '/tmp/file-history-e2e.png' })
+  }
+)
+
+// Relies on the repository opened by the previous serial test.
+fileHistoryTest(
+  'views a file history commit in History',
+  async ({ app, mainWindow: page }) => {
+    await page.locator('#changes-tab').click()
+    await expect(page.locator('#changes-list')).toBeVisible({ timeout: 15000 })
+
+    const changedFileRow = page
+      .locator('#changes-list .list-item')
+      .filter({ hasText: HistoryFileName })
+      .first()
+    await changedFileRow.click()
+    await page.locator('.diff-container .file-history-toggle').first().click()
+
+    const changesPanel = page.locator('.file-history-panel')
+    const firstCommitRow = changesPanel
+      .locator('#commit-list .list-item')
+      .filter({ hasText: HistoryFirstCommit })
+      .first()
+    await expect(firstCommitRow).toBeVisible({ timeout: 15000 })
+
+    await interceptFileHistoryContextMenu(app, 'view in history')
+    await clearContextMenuLabels(app)
+    await firstCommitRow.click({ button: 'right' })
+
+    await expect
+      .poll(() => getContextMenuLabels(app))
+      .toEqual(['View in history', '', 'Copy SHA'])
+
+    // The commit is beyond the first History batch, so this also checks that
+    // more history is loaded and the commit is scrolled into view.
+    await expect(page.locator('#compare-view')).toBeVisible({ timeout: 15000 })
+    const selectedFirstCommit = historyCommitRow(page, HistoryFirstCommit)
+    await expect(selectedFirstCommit).toBeVisible({ timeout: 15000 })
+    await expect(selectedFirstCommit).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('#compare-view')).not.toContainText(
+      HistoryDirtyCommit
+    )
+
+    const historyFileRow = page
+      .locator('#history .commit-details .file-list .list-item')
+      .filter({ hasText: HistoryFileName })
+      .first()
+    await expect(historyFileRow).toBeVisible({ timeout: 15000 })
+    await historyFileRow.click()
+    await page.locator('.diff-container .file-history-toggle').first().click()
+
+    const historyPanel = page.locator('.file-history-panel')
+    const secondCommitRow = historyPanel
+      .locator('#commit-list .list-item')
+      .filter({ hasText: HistorySecondCommit })
+      .first()
+    await expect(secondCommitRow).toBeVisible({ timeout: 15000 })
+
+    await clearContextMenuLabels(app)
+    await secondCommitRow.click({ button: 'right' })
+    await expect
+      .poll(() => getContextMenuLabels(app))
+      .toEqual(['View in history', '', 'Copy SHA'])
+
+    await expect(historyPanel).toHaveCount(0, { timeout: 15000 })
+    const selectedSecondCommit = historyCommitRow(page, HistorySecondCommit)
+    await expect(selectedSecondCommit).toBeVisible({ timeout: 15000 })
+    await expect(selectedSecondCommit).toHaveAttribute('aria-selected', 'true')
   }
 )

@@ -102,6 +102,12 @@ interface ISelectedCommitsProps {
    */
   readonly onReturnToWorkingDirectory?: () => void
 
+  /**
+   * Called when the user wants to select a file history commit in the History
+   * commit list.
+   */
+  readonly onViewCommitInHistory?: (sha: string) => void
+
   /** The current branch tip, used to discard stale history loads. */
   readonly headSHA?: string
 }
@@ -390,6 +396,11 @@ export class SelectedCommits extends React.Component<
     }
   }
 
+  private onViewFileHistoryCommitInHistory = (sha: string) => {
+    this.closeFileHistory()
+    this.props.onViewCommitInHistory?.(sha)
+  }
+
   private onFileHistoryEntrySelected = (entry: IFileHistoryEntry) => {
     void this.loadFileHistoryDiff(entry, this.props.hideWhitespaceInDiff)
   }
@@ -442,6 +453,12 @@ export class SelectedCommits extends React.Component<
           onHistoryHeightReset={this.onHistoryHeightReset}
           onEntrySelected={this.onFileHistoryEntrySelected}
           onReturnToWorkingDirectory={this.props.onReturnToWorkingDirectory}
+          onViewCommitInHistory={
+            this.props.onViewCommitInHistory === undefined
+              ? undefined
+              : this.onViewFileHistoryCommitInHistory
+          }
+          onViewCommitOnGitHub={this.props.onViewCommitOnGitHub}
           emoji={this.props.emoji}
           accounts={this.props.accounts}
           localCommitSHAs={this.props.localCommitSHAs}

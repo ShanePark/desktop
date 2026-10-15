@@ -201,16 +201,32 @@ demand. Drag the divider above the history list to resize it, double-click it
 to reset, or focus it and use Up/Down or Home/End. The upper diff keeps a minimum
 height.
 
+Right-clicking a commit in the file history list shows a short menu instead of
+the History tab's commit operations: **View in history**, **Copy SHA**,
+**Copy tag** or **Copy tags** when the commit has tags, and **View on GitHub**
+(**View on GitHub Enterprise** for Enterprise repositories) when the repository
+is on GitHub and the commit has been pushed. Unavailable actions are left out
+rather than disabled.
+
+**View in history** switches to the History tab in plain History mode (leaving
+any branch comparison), loads more history until the commit is listed, selects
+it, and scrolls it into view (to the top of the commit list when possible). For
+a commit far back in history, the History tab opens after the extra history
+batches have loaded. From the History tab's file history, it also closes the
+file history panel. If the commit is no longer in the current HEAD history, for
+example after a checkout, it only shows the History tab.
+
 Focused verification:
 
 ```sh
 node script/test.mjs app/test/unit/git/file-history-test.ts app/test/unit/ui/file-history-panel-test.tsx app/test/unit/ui/vertical-resizable-test.tsx
-node script/test.mjs app/test/unit/ui/changes-file-history-test.tsx
+node script/test.mjs app/test/unit/ui/changes-file-history-test.tsx app/test/unit/ui/commit-list-context-menu-test.tsx app/test/unit/load-history-until-commit-test.ts
 ```
 
 The focused Electron test in `app/test/e2e/file-history.e2e.ts` covers the fixed
-header, Dirty transitions, divider dragging, and the context menu for a clean
-file using an isolated temporary repository.
+header, Dirty transitions, divider dragging, the context menu for a clean
+file, and **View in history** from Changes and History for a commit beyond the
+first 100 History commits, using an isolated temporary repository.
 
 ### Local development with the Dock icon
 
